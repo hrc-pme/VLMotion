@@ -29,6 +29,11 @@ import cv2
 
 from . import yolo_networking as yn
 from . import d435i_helpers_without_pyrealsense as dh
+from .gui_rotation import (
+    compute_display_offsets,
+    normalized_display_position,
+    resolve_rotation_degrees,
+)
 
 try:
     import stretch_body.robot as rb
@@ -181,6 +186,7 @@ def main(x: int, y: int, use_remote: bool, stop_dist_m: float, max_time_s: float
     sub.connect(addr)
 
     tracker = None
+    display_rotation_deg = resolve_rotation_degrees()
     t0 = time.time()
     done_hold = 0
 
@@ -205,6 +211,12 @@ def main(x: int, y: int, use_remote: bool, stop_dist_m: float, max_time_s: float
 
             # Update target pixel
             px, py = tracker.update(color)
+            horizontal_offset, vertical_offset, _, _ = compute_display_offsets(
+                px, py, w, h, rotation_deg=display_rotation_deg
+            )
+            disp_u, disp_v = normalized_display_position(
+                px, py, w, h, rotation_deg=display_rotation_deg
+            )
 
             # Depth and 3D point
             z_m = robust_depth_at_pixel(depth, px, py, dscale, k=4)
@@ -228,26 +240,15 @@ def main(x: int, y: int, use_remote: bool, stop_dist_m: float, max_time_s: float
             dist_err = z_m - float(stop_dist_m)
             v_cmd = float(np.clip(k_lin * dist_err, -0.30, 0.35))  # m/s forward positive
 
-            # Tilt-first gating based on GUI vertical (rotated view): the GUI shows 90° CW rotation,
-            # so y_display corresponds to original x (px). If the point appears in the lower third
-            # of the GUI (i.e., px > 2/3 * w) OR the GUI-vertical error is large, hold the base still
-            # and let head tilt re-center vertically before moving.
-            lower_th_px = (2.0 / 3.0) * float(w)
-            ev_display = (float(px) - (float(w) - 1.0) / 2.0) / max(1.0, float(w))
-            if float(px) > lower_th_px or abs(ev_display) > 0.08:
+            # Tilt-first gating based on GUI vertical error - stop driving forward until
+            # the white point is near the upper 2/3 of the display and within the deadband.
+            if (disp_v > (2.0 / 3.0)) or (abs(vertical_offset) > 0.08):
                 # During tilt-first alignment, hold the base translation still so head can align vertically.
                 v_cmd = 0.0
 
             # Head tilt/pan to keep point near image center
-            cy = (h - 1) / 2.0
-            cx_pix = (w - 1) / 2.0
-            # D435i image is displayed 90° CW in the GUI. The head tilt (pitch)
-            # should correct the GUI-vertical error, which corresponds to the
-            # original image x-axis (px) in the unrotated frame used here.
-            # Likewise, head pan (yaw of the head) would correct the GUI-horizontal
-            # error, which corresponds to the original image y-axis (py).
-            tilt_err = (px - cx_pix) / max(1.0, float(w))   # use px for tilt
-            pan_err  = (py - cy)     / max(1.0, float(h))   # use py for pan
+            tilt_err = vertical_offset
+            pan_err = horizontal_offset
 
             # Determine sign convention for head tilt: if tilting downward requires
             # negative velocity (default on Stretch), set tilt_down_negative=True.
@@ -262,9 +263,7 @@ def main(x: int, y: int, use_remote: bool, stop_dist_m: float, max_time_s: float
             # The GUI rotates the original image by 90° clockwise, and for drawing we use:
             #   x_display = (h - 1) - py,  y_display = px
             # So compute the GUI horizontal error directly in display space to avoid sign confusion.
-            x_disp = (float(h) - 1.0) - float(py)
-            x_center = (float(h) - 1.0) / 2.0
-            err_disp_x = (x_disp - x_center) / max(1.0, float(h))  # >0 means point is on GUI-right
+            err_disp_x = (disp_u - 0.5)
             k_gui = 0.6  # small gain for display-based yaw
             # Positive GUI-right error -> rotate base slightly right (clockwise -> negative w)
             w_gui = float(np.clip(-k_gui * err_disp_x, -0.15, 0.15))

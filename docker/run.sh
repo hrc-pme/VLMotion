@@ -8,7 +8,7 @@ set -euo pipefail
 # 說明:
 #   - 若第一個非 --root 的參數是數字 (0-232)，視為 ROS_DOMAIN_ID（容器名稱使用預設）
 #   - 若第一個是名稱，第二個是數字，則分別視為 容器名稱 與 ROS_DOMAIN_ID
-# 預設容器名稱: VLPoint-inference
+# 預設容器名稱: vla-inference
 
 EXEC_USER=""
 DOMAIN_ID=""
@@ -18,7 +18,7 @@ if [[ "${1-}" == "--root" ]]; then
 fi
 
 # 解析參數：支援 --root、容器名稱與數字型 ROS_DOMAIN_ID
-CONTAINER_NAME="VLPoint-inference"
+CONTAINER_NAME="vla-inference"
 
 is_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]

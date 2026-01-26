@@ -465,5 +465,8 @@ USER root
 RUN python3 -m pip install --no-cache-dir --force-reinstall 'setuptools>=68,<80'
 USER $USERNAME
 
+# ---- Install wit package ----
+RUN python3 -m pip install --no-cache-dir wit
+
 # Default command
 CMD ["bash"]

@@ -5,9 +5,9 @@ set -euo pipefail
 # 停止容器並執行 docker compose down
 # 用法：
 #   ./docker/stop.sh [容器名稱]
-# 預設容器名稱: VLPoint-inference
+# 預設容器名稱: vla-inference
 
-CONTAINER_NAME=${1:-VLPoint-inference}
+CONTAINER_NAME=${1:-vla-inference}
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "找不到 docker 指令，請先安裝 Docker" >&2

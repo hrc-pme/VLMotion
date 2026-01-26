@@ -17,6 +17,7 @@ import numpy as np
 import requests
 from PIL import Image, ImageDraw, ImageQt
 import cv2
+import threading
 
 # Qt plugin environment hardening (must run before importing PyQt5)
 try:
@@ -54,6 +55,7 @@ from point.utils import build_logger
 import zmq
 # Use local package networking settings
 from . import yolo_networking as yn
+from .white_point_tracker import WhitePointTracker
 import yaml
 from yaml.loader import SafeLoader
 
@@ -189,6 +191,7 @@ class WhitePointGraspProcess:
             use_remote = bool(kwargs.get('use_remote', False))
             radius_m = float(kwargs.get('radius_m', 0.0))
             extra_push_m = kwargs.get('extra_push_m', None)
+        rotation_deg = kwargs.get('rotation_deg')
         cmd = [
             sys.executable, "-m",
             "VLServo.white_point",
@@ -217,6 +220,8 @@ class WhitePointGraspProcess:
         env.setdefault('YOLO_DISPLAY', '0')
         env.setdefault('YOLO_DEBUG_RESULTS', '0')
         env.setdefault('YOLO_DEBUG_RECEIVED', '0')
+        if rotation_deg is not None:
+            env['VL_IMAGE_ROTATION_DEG'] = str(rotation_deg)
         self.proc = subprocess.Popen(cmd, cwd=pkg_dir, env=env)
         return self.proc
 
@@ -246,31 +251,34 @@ class BaseNavigationProcess:
             x, y = int(args[0]), int(args[1])
             use_remote = bool(args[2]) if len(args) >= 3 else False
             stop_dist_m = float(args[3]) if len(args) >= 4 else 0.5
-            tilt_only = bool(args[4]) if len(args) >= 5 else True
+            tilt_only = bool(args[4]) if len(args) >= 5 else False  # Changed to False - allow forward motion
             tilt_down_negative = bool(args[5]) if len(args) >= 6 else True
-            invert_yaw = bool(args[6]) if len(args) >= 7 else True
+            invert_yaw = bool(args[6]) if len(args) >= 7 else False  # Changed to False for ROS2
         else:
             x = int(kwargs.get('x'))
             y = int(kwargs.get('y'))
             use_remote = bool(kwargs.get('use_remote', False))
             stop_dist_m = float(kwargs.get('stop_dist_m', 0.5))
-            tilt_only = bool(kwargs.get('tilt_only', True))
+            tilt_only = bool(kwargs.get('tilt_only', False))  # Changed to False - allow forward motion
             tilt_down_negative = bool(kwargs.get('tilt_down_negative', True))
-            invert_yaw = bool(kwargs.get('invert_yaw', True))
+            invert_yaw = bool(kwargs.get('invert_yaw', False))  # Changed to False for ROS2
+        rotation_deg = kwargs.get('rotation_deg')
+        
+        # Use ROS2 version of base_motion to avoid stretch_body conflicts
         cmd = [
             sys.executable, "-m",
-            "VLServo.base_motion",
+            "VLServo.base_motion_ros2",  # Changed to ROS2 version
             "-x", str(x), "-y", str(y),
             "--stop-dist-m", str(stop_dist_m)
         ]
-        if use_remote:
-            cmd.append("-r")
+        # use_remote is not applicable in ROS2 version (always uses ROS2)
         if tilt_only:
             cmd.append("--tilt-only")
-        cmd.append("--tilt-down-negative" if tilt_down_negative else "--tilt-down-positive")
+        if tilt_down_negative:
+            cmd.append("--tilt-down-negative")
         if invert_yaw:
             cmd.append("--invert-yaw")
-        logger.info(f"Starting LLM Navigation: {' '.join(cmd)}")
+        logger.info(f"Starting LLM Navigation (ROS2): {' '.join(cmd)}")
         env = os.environ.copy()
         sep = os.pathsep
         existing = env.get('PYTHONPATH', '')
@@ -279,6 +287,8 @@ class BaseNavigationProcess:
         env['PYTHONPATH'] = f"{parent_dir}{sep}{pkg_dir}{(sep + existing) if existing else ''}"
         env.setdefault('MPLBACKEND', 'Agg')
         env.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        if rotation_deg is not None:
+            env['VL_IMAGE_ROTATION_DEG'] = str(rotation_deg)
         self.proc = subprocess.Popen(cmd, cwd=pkg_dir, env=env)
         return self.proc
 
@@ -293,6 +303,118 @@ class BaseNavigationProcess:
                 except Exception:
                     pass
         self.proc = None
+
+
+class ROSTargetPublisher:
+    """Lightweight ROS2 publisher for /visual_servo/target_point updates."""
+    def __init__(self, topic='/visual_servo/target_point'):
+        self.topic = topic
+        self._publisher = None
+        self._node = None
+        self._rclpy = None
+        self._PointStamped = None
+        self._enabled = False
+        self._tracked_sub = None
+        self._tracked_callback = None
+        self._spin_thread = None
+        self._spin_running = False
+        try:
+            import rclpy
+            from geometry_msgs.msg import PointStamped
+            self._rclpy = rclpy
+            self._PointStamped = PointStamped
+            if not rclpy.ok():
+                rclpy.init()
+            self._node = rclpy.create_node('vlservo_gui_target_publisher')
+            self._publisher = self._node.create_publisher(PointStamped, topic, 10)
+            self._enabled = True
+            self._start_spin_thread()
+            logger.info(f"ROS target publisher ready on {topic}")
+        except Exception as exc:
+            logger.warning(f"ROS target publisher unavailable: {exc}")
+            self._publisher = None
+            self._node = None
+            self._enabled = False
+
+    def publish_pixel_target(self, x: float, y: float, camera_name: str = 'd435i'):
+        if not self._enabled or self._publisher is None:
+            return
+        try:
+            msg = self._PointStamped()
+            msg.header.stamp = self._node.get_clock().now().to_msg()
+            cam = (camera_name or '').lower()
+            msg.header.frame_id = 'camera_pixel' if cam == 'd435i' else 'gripper_camera_pixel'
+            msg.point.x = float(x)
+            msg.point.y = float(y)
+            msg.point.z = 0.0
+            self._publisher.publish(msg)
+        except Exception as exc:
+            logger.warning(f"Failed to publish ROS navigation target: {exc}")
+
+    def subscribe_tracked_point(self, callback, topic='/visual_servo/tracked_point'):
+        """Subscribe to the tracked white-point pixel published by the navigator."""
+        if not self._enabled or self._node is None or self._PointStamped is None:
+            return
+        try:
+            self._tracked_callback = callback
+            self._tracked_sub = self._node.create_subscription(
+                self._PointStamped,
+                topic,
+                self._handle_tracked_point,
+                10
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to subscribe to tracked point: {exc}")
+
+    def _handle_tracked_point(self, msg):
+        cb = self._tracked_callback
+        if cb is None:
+            return
+        try:
+            cb(msg)
+        except Exception as exc:
+            logger.warning(f"Tracked point callback failed: {exc}")
+
+    def _start_spin_thread(self):
+        if self._spin_thread is not None or not self._enabled or self._node is None:
+            return
+        self._spin_running = True
+        self._spin_thread = threading.Thread(target=self._spin_loop, daemon=True)
+        self._spin_thread.start()
+
+    def _spin_loop(self):
+        while self._spin_running and self._enabled and self._node is not None:
+            try:
+                self._rclpy.spin_once(self._node, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.05)
+
+    def shutdown(self):
+        if not self._enabled:
+            return
+        self._spin_running = False
+        if self._spin_thread is not None:
+            try:
+                self._spin_thread.join(timeout=0.5)
+            except Exception:
+                pass
+            self._spin_thread = None
+        try:
+            if self._tracked_sub is not None and self._node is not None:
+                self._node.destroy_subscription(self._tracked_sub)
+        except Exception:
+            pass
+        try:
+            if self._publisher is not None and self._node is not None:
+                self._node.destroy_publisher(self._publisher)
+        except Exception:
+            pass
+        try:
+            if self._node is not None:
+                self._node.destroy_node()
+        except Exception:
+            pass
+        self._enabled = False
 
 
 def pil_to_qimage(img: Image.Image) -> QImage:
@@ -528,66 +650,40 @@ class ImageLabel(QLabel):
         super().mousePressEvent(event)
 
 
-class SimplePointTracker:
-    """Template-matching based point tracker to keep LLM white-point attached to the object.
-
-    Initializes a template around the provided pixel and, on update, finds the
-    best match within a local window to produce a new pixel location.
-    """
-    def __init__(self, template_size: int = 41, search_radius: int = 40, min_score: float = 0.4):
+class LKPointTracker:
+    """Lucas-Kanade + template matcher wrapper for GUI white-point tracking."""
+    def __init__(self, template_size: int = 41, search_radius: int = 45,
+                 min_score: float = 0.85, reacquire_score: float = 0.9):
         self.template_size = max(11, int(template_size) | 1)
         self.search_radius = max(8, int(search_radius))
         self.min_score = float(min_score)
-        self.template = None
-        self.px = None
-        self.py = None
+        self.reacquire_score = float(reacquire_score)
+        self.tracker = None
         self.initialized = False
-
-    def _extract_patch(self, gray, cx, cy, size):
-        h, w = gray.shape[:2]
-        half = size // 2
-        x0 = max(0, int(cx) - half); x1 = min(w, int(cx) + half + 1)
-        y0 = max(0, int(cy) - half); y1 = min(h, int(cy) + half + 1)
-        patch = gray[y0:y1, x0:x1]
-        if patch.shape[0] != size or patch.shape[1] != size:
-            pad_t = size - patch.shape[0]
-            pad_l = size - patch.shape[1]
-            patch = cv2.copyMakeBorder(patch, 0, pad_t, 0, pad_l, cv2.BORDER_REPLICATE)
-        return patch
 
     def initialize(self, color_image, px, py):
-        gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY) if color_image.ndim == 3 else color_image
-        self.template = self._extract_patch(gray, px, py, self.template_size)
-        self.px, self.py = int(px), int(py)
+        self.tracker = WhitePointTracker(
+            int(px),
+            int(py),
+            template_size=self.template_size,
+            search_radius=self.search_radius,
+            min_match_score=self.min_score,
+            reacquire_score=self.reacquire_score,
+            max_lost_frames=5,
+        )
+        self.tracker.initialize(color_image)
         self.initialized = True
+        return self.tracker.px, self.tracker.py
 
     def update(self, color_image):
-        if not self.initialized:
+        if not self.initialized or self.tracker is None:
             raise RuntimeError('Tracker not initialized')
-        gray = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY) if color_image.ndim == 3 else color_image
-        h, w = gray.shape[:2]
-        half_t = self.template_size // 2
-        sr = self.search_radius
-        x0 = max(0, self.px - sr - half_t); x1 = min(w, self.px + sr + half_t + 1)
-        y0 = max(0, self.py - sr - half_t); y1 = min(h, self.py + sr + half_t + 1)
-        search = gray[y0:y1, x0:x1]
-        if search.shape[0] < self.template_size or search.shape[1] < self.template_size:
-            return self.px, self.py
-        res = cv2.matchTemplate(search, self.template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-        # If quality too low, keep last location
-        if max_val < self.min_score:
-            return self.px, self.py
-        cx = x0 + max_loc[0] + half_t
-        cy = y0 + max_loc[1] + half_t
-        self.px, self.py = int(cx), int(cy)
-        return self.px, self.py
+        px, py, visible = self.tracker.update(color_image)
+        return int(px), int(py), bool(visible)
 
     def reset(self):
-        self.template = None
+        self.tracker = None
         self.initialized = False
-        self.px = None
-        self.py = None
 
 
 class CameraReceiverThread(QThread):
@@ -813,6 +909,100 @@ class DirectCameraThread(QThread):
             self.status_changed.emit("Camera stopped")
 
 
+class ROS2CameraThread(QThread):
+    """Thread to subscribe to ROS2 camera topics"""
+    frame_received = pyqtSignal(object)
+    status_changed = pyqtSignal(str)
+
+    def __init__(self, camera_name: str = 'd405'):
+        super().__init__()
+        self.camera_name = camera_name
+        self._running = True
+        self._subscriber = None
+        self._executor = None
+        
+    def stop(self):
+        self._running = False
+        
+    def run(self):
+        try:
+            import rclpy
+            from rclpy.executors import SingleThreadedExecutor
+            from VLServo.camera_ros2_subscriber import CameraSubscriber, get_depth_scale
+            
+            # Initialize rclpy if not already done
+            if not rclpy.ok():
+                rclpy.init()
+            
+            # Create subscriber
+            self._subscriber = CameraSubscriber(
+                camera_name=self.camera_name,
+                node_name=f'gui_camera_subscriber_{self.camera_name}'
+            )
+            
+            self._executor = SingleThreadedExecutor()
+            self._executor.add_node(self._subscriber)
+            
+            self.status_changed.emit(f"ROS2 Camera subscriber started for {self.camera_name}")
+            
+            # Wait for initial frames
+            import time
+            timeout = 10.0
+            start_time = time.time()
+            
+            while self._running and not self._subscriber.is_ready():
+                if time.time() - start_time > timeout:
+                    self.status_changed.emit(f"Timeout waiting for {self.camera_name} frames")
+                    return
+                self._executor.spin_once(timeout_sec=0.1)
+            
+            if not self._running:
+                return
+                
+            self.status_changed.emit(f"{self.camera_name} frames ready")
+            
+            # Main loop
+            while self._running:
+                self._executor.spin_once(timeout_sec=0.1)
+                
+                if self._subscriber.is_ready():
+                    color_image, depth_image, camera_info = self._subscriber.get_frames()
+                    
+                    if color_image is not None and depth_image is not None:
+                        # Convert to format expected by GUI
+                        # ROS2 uses BGR for color images, convert to RGB
+                        import cv2
+                        color_rgb = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+                        
+                        # Get depth scale
+                        depth_scale = get_depth_scale()
+                        
+                        # Get depth camera info (use color camera info if not available)
+                        depth_camera_info = self._subscriber.depth_camera_info or camera_info
+                        
+                        out = {
+                            'depth_camera_info': depth_camera_info,
+                            'color_camera_info': camera_info,
+                            'depth_scale': depth_scale,
+                            'color_image': color_rgb,
+                            'depth_image': depth_image,
+                        }
+                        self.frame_received.emit(out)
+                        
+        except Exception as e:
+            import traceback
+            self.status_changed.emit(f"ROS2 Camera Error: {e}\n{traceback.format_exc()}")
+        finally:
+            try:
+                if self._executor is not None:
+                    self._executor.shutdown()
+                if self._subscriber is not None:
+                    self._subscriber.destroy_node()
+            except Exception:
+                pass
+            self.status_changed.emit(f"ROS2 Camera {self.camera_name} stopped")
+
+
 class RoboPointMainWindow(QMainWindow):
     def __init__(self, controller_url=None, autostart=False, model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b",
                  load_4bit=True, use_remote_stream=False):
@@ -833,6 +1023,8 @@ class RoboPointMainWindow(QMainWindow):
         self.use_remote_stream = use_remote_stream
         self.use_remote_yolo = use_remote_stream
         self.camera_thread = None
+        self.ros2_camera_thread = None  # ROS2 camera subscriber thread
+        self.direct_camera_thread = None  # Direct pyrealsense2 thread
         self.yolo_thread = None
         self.latest_camera_info = None
         self.latest_depth_scale = None
@@ -868,8 +1060,18 @@ class RoboPointMainWindow(QMainWindow):
         self.white_point_proc = WhitePointGraspProcess()
         # External process for LLM Navigation
         self.base_nav_proc = BaseNavigationProcess()
+        self.ros_target_pub = ROSTargetPublisher()
         # Track current camera selection for display transforms
         self.current_camera = 'D405'
+        self._default_rot_d435 = -90.0
+        self.latest_nav_tracked_px = None
+        self.latest_nav_tracked_py = None
+        self.latest_nav_tracked_visible = False
+        self._nav_track_lock = threading.Lock()
+        try:
+            self.ros_target_pub.subscribe_tracked_point(self._on_tracked_point)
+        except Exception:
+            pass
 
         # ArUco perception
         try:
@@ -907,6 +1109,7 @@ class RoboPointMainWindow(QMainWindow):
         # If subscribing to a remote robot's ZMQ stream, start receiver now
         if self.use_remote_stream:
             self.start_camera_receiver()
+        # No auto-start camera - wait for user to click "Start Camera"
 
     def setup_ui(self):
         central = QWidget(); self.setCentralWidget(central)
@@ -969,9 +1172,7 @@ class RoboPointMainWindow(QMainWindow):
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Camera:"))
         self.camera_selector = QComboBox(); self.camera_selector.addItems(["D405", "D435i"]) ; row1.addWidget(self.camera_selector)
         sender_layout.addLayout(row1)
-        row2 = QHBoxLayout(); row2.addWidget(QLabel("Exposure:"))
-        self.exposure_selector = QComboBox(); self.exposure_selector.addItems(["low", "medium", "auto"]) ; row2.addWidget(self.exposure_selector)
-        sender_layout.addLayout(row2)
+        # Always use ROS2 (no source selector needed)
         btnrow = QHBoxLayout();
         self.btn_start_sender = QPushButton("Start Camera"); self.btn_stop_sender = QPushButton("Stop Camera"); self.btn_stop_sender.setEnabled(False)
         btnrow.addWidget(self.btn_start_sender); btnrow.addWidget(self.btn_stop_sender)
@@ -985,8 +1186,10 @@ class RoboPointMainWindow(QMainWindow):
         self.btn_clean_llm = QPushButton("Clean Points")
         self.llm_status = QLabel("LLM Grasping: Not Running")
         # Add a dedicated checkbox for LLM flow to avoid confusion
-        self.manage_llm_demo_checkbox = QCheckBox("Manage Visual Servoing process")
-        self.manage_llm_demo_checkbox.setChecked(True)
+        # NOTE: When using ROS2 launch, disable this to avoid hardware conflicts with stretch_driver
+        self.manage_llm_demo_checkbox = QCheckBox("Manage Visual Servoing process (disable for ROS2 mode)")
+        self.manage_llm_demo_checkbox.setChecked(False)  # Default to False for ROS2 compatibility
+        self.manage_llm_demo_checkbox.setToolTip("Disable this when using ROS2 launch to avoid conflicts with stretch_driver")
         # Grasp closeness control (extra push along viewing ray)
         self.extra_push_cm_spin = QDoubleSpinBox(); self.extra_push_cm_spin.setRange(0.0, 5.0); self.extra_push_cm_spin.setSingleStep(0.5); self.extra_push_cm_spin.setValue(3.0)
         self.extra_push_cm_spin.setSuffix(" cm")
@@ -1006,11 +1209,9 @@ class RoboPointMainWindow(QMainWindow):
         self.btn_start_yolo = QPushButton("Start YOLO Grasping", parent=self.yolo_group)
         self.btn_stop_yolo = QPushButton("Stop YOLO Grasping", parent=self.yolo_group); self.btn_stop_yolo.setEnabled(False)
         self.yolo_status = QLabel("YOLO Grasping: Not Running", parent=self.yolo_group)
-        self.manage_demo_checkbox = QCheckBox("Manage Visual Servoing process", parent=self.yolo_group)
-        try:
-            self.manage_demo_checkbox.setChecked(bool(int(os.getenv('YOLO_MANAGE_DEMO', '0'))))
-        except Exception:
-            self.manage_demo_checkbox.setChecked(False)
+        self.manage_demo_checkbox = QCheckBox("Manage Visual Servoing process (disable for ROS2 mode)", parent=self.yolo_group)
+        self.manage_demo_checkbox.setChecked(False)  # Default to False for ROS2 compatibility
+        self.manage_demo_checkbox.setToolTip("Disable this when using ROS2 launch to avoid conflicts with stretch_driver")
         yrow = QHBoxLayout(); yrow.addWidget(self.btn_start_yolo); yrow.addWidget(self.btn_stop_yolo)
         yolo_layout.addLayout(yrow)
         yolo_layout.addWidget(self.yolo_status); yolo_layout.addWidget(self.manage_demo_checkbox)
@@ -1173,22 +1374,22 @@ class RoboPointMainWindow(QMainWindow):
                         self.camera_selector.setCurrentText('D405')
                     except Exception:
                         pass
-                    # Restart local direct capture or remote subscriber on D405
+                    # Always use ROS2 camera
                     if self.use_remote_stream:
                         self.restart_camera_receiver()
                     else:
-                        # If a direct camera is running for a different model, restart it on D405
-                        if self.direct_camera_thread is not None:
+                        # Restart ROS2 camera on D405
+                        if self.ros2_camera_thread is not None:
                             try:
-                                self.direct_camera_thread.stop(); self.direct_camera_thread.wait(1000)
+                                self.ros2_camera_thread.stop(); self.ros2_camera_thread.wait(1000)
                             except Exception:
                                 pass
-                            self.direct_camera_thread = None
+                            self.ros2_camera_thread = None
                         try:
-                            self.direct_camera_thread = DirectCameraThread(camera='D405', exposure=self.exposure_selector.currentText())
-                            self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
-                            self.direct_camera_thread.status_changed.connect(self.on_camera_status)
-                            self.direct_camera_thread.start()
+                            self.ros2_camera_thread = ROS2CameraThread(camera_name='d405')
+                            self.ros2_camera_thread.frame_received.connect(self.on_camera_frame)
+                            self.ros2_camera_thread.status_changed.connect(self.on_camera_status)
+                            self.ros2_camera_thread.start()
                             self.btn_start_sender.setEnabled(False); self.btn_stop_sender.setEnabled(True)
                         except Exception:
                             pass
@@ -1225,11 +1426,13 @@ class RoboPointMainWindow(QMainWindow):
                             px, py = self._nearest_non_white_black(hsv, px, py, radius=6)
                         self.llm_tracked_px, self.llm_tracked_py = int(px), int(py)
                         self.llm_tracker = None
+                        self._publish_navigation_target(self.llm_tracked_px, self.llm_tracked_py)
                         px_py = (self.llm_tracked_px, self.llm_tracked_py)
 
             # Apply current decision: start/stop white-point publisher
             running_white = (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)
             if px_py is not None:
+                self._publish_navigation_target(px_py[0], px_py[1])
                 if running_white:
                     try:
                         self.white_point_proc.stop()
@@ -1240,7 +1443,14 @@ class RoboPointMainWindow(QMainWindow):
                     ep_m = float(self.extra_push_cm_spin.value()) / 100.0
                 except Exception:
                     ep_m = None
-                self.white_point_proc.start(px_py[0], px_py[1], self.use_remote_yolo, 0.0, ep_m)
+                self.white_point_proc.start(
+                    px_py[0],
+                    px_py[1],
+                    self.use_remote_yolo,
+                    0.0,
+                    ep_m,
+                    rotation_deg=self._current_image_rotation_deg(),
+                )
                 self.llm_status.setText(f"LLM Grasping: Running at ({px_py[0]}, {px_py[1]})")
                 self.btn_stop_llm.setEnabled(True)
             else:
@@ -1376,10 +1586,38 @@ class RoboPointMainWindow(QMainWindow):
                                             t_fg, t_bg = 1, 4
                                             (tw, th), _ = cv2.getTextSize(line, font, font_scale, t_fg)
                                             tx = int(px - tw / 2); ty = int(py - 55)
-                                            cv2.putText(vis, line, (tx, ty), font, font_scale, (0, 0, 0), t_bg, cv2.LINE_AA)
-                                            cv2.putText(vis, line, (tx, ty), font, font_scale, (255, 255, 255), t_fg, cv2.LINE_AA)
+                                cv2.putText(vis, line, (tx, ty), font, font_scale, (0, 0, 0), t_bg, cv2.LINE_AA)
+                                cv2.putText(vis, line, (tx, ty), font, font_scale, (255, 255, 255), t_fg, cv2.LINE_AA)
                         except Exception:
                             pass
+                except Exception:
+                    pass
+            
+            # Always draw the currently tracked “white point” reported by white_point.py
+            try:
+                overlay_enabled = (self.overlay_white_dot_cb.isChecked()
+                                   if getattr(self, 'overlay_white_dot_cb', None) is not None else True)
+            except Exception:
+                overlay_enabled = True
+            if overlay_enabled and (self.latest_yolo_send_dict is not None):
+                try:
+                    wp_visible = bool(self.latest_yolo_send_dict.get('white_point_visible'))
+                    wp_px = self.latest_yolo_send_dict.get('white_point_px')
+                    wp_py = self.latest_yolo_send_dict.get('white_point_py')
+                    if wp_visible and wp_px is not None and wp_py is not None:
+                        wp_px = int(np.clip(round(float(wp_px)), 0, w0 - 1))
+                        wp_py = int(np.clip(round(float(wp_py)), 0, h0 - 1))
+                        wp_color = (0, 255, 255)
+                        if getattr(self, 'current_camera', 'D405') == 'D435i':
+                            xr, yr = (h0 - 1 - wp_py), wp_px
+                            post_rotate_annotations.append(('wp', int(xr), int(yr), None))
+                        else:
+                            import cv2
+                            cv2.circle(vis, (wp_px, wp_py), 7, wp_color, 2, lineType=cv2.LINE_AA)
+                            cv2.putText(
+                                vis, "WP", (wp_px + 6, wp_py - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, wp_color, 1, cv2.LINE_AA
+                            )
                 except Exception:
                     pass
 
@@ -1406,18 +1644,24 @@ class RoboPointMainWindow(QMainWindow):
                                 best = (d0, px0, py0)
                         if best is not None:
                             self.llm_tracked_px, self.llm_tracked_py = int(best[1]), int(best[2])
-                            self.llm_tracker = SimplePointTracker(template_size=41, search_radius=40)
+                            self.llm_tracker = LKPointTracker(template_size=41, search_radius=45)
                             self.llm_tracker.initialize(color_image, self.llm_tracked_px, self.llm_tracked_py)
                     
                     # If we have a tracked point but no tracker initialized, initialize it
                     elif (self.llm_tracked_px is not None and self.llm_tracked_py is not None and 
                           (self.llm_tracker is None or not self.llm_tracker.initialized)):
-                        self.llm_tracker = SimplePointTracker(template_size=41, search_radius=40)
+                        self.llm_tracker = LKPointTracker(template_size=41, search_radius=45)
                         self.llm_tracker.initialize(color_image, self.llm_tracked_px, self.llm_tracked_py)
                     
                     # Update tracker location if we have one
                     if self.llm_tracker is not None and self.llm_tracker.initialized:
-                        self.llm_tracked_px, self.llm_tracked_py = self.llm_tracker.update(color_image)
+                        try:
+                            upd_px, upd_py, visible = self.llm_tracker.update(color_image)
+                            if visible:
+                                self.llm_tracked_px, self.llm_tracked_py = upd_px, upd_py
+                                self._publish_navigation_target(self.llm_tracked_px, self.llm_tracked_py)
+                        except Exception:
+                            pass
                         
                     # Use current tracked position
                     if self.llm_tracked_px is not None and self.llm_tracked_py is not None:
@@ -1474,6 +1718,33 @@ class RoboPointMainWindow(QMainWindow):
                                 cv2.putText(vis, line, (tx, ty), font, font_scale, (255, 255, 255), t_fg, cv2.LINE_AA)
                 except Exception:
                     pass
+
+            # Visualize the pixel currently tracked by the ROS2 navigator
+            try:
+                with self._nav_track_lock:
+                    nav_visible = bool(self.latest_nav_tracked_visible)
+                    nav_px = self.latest_nav_tracked_px
+                    nav_py = self.latest_nav_tracked_py
+                if nav_visible and nav_px is not None and nav_py is not None:
+                    nav_px = int(np.clip(round(nav_px), 0, w0 - 1))
+                    nav_py = int(np.clip(round(nav_py), 0, h0 - 1))
+                    color_nav = (255, 0, 255)
+                    if getattr(self, 'current_camera', 'D405') == 'D435i':
+                        xr, yr = (h0 - 1 - nav_py), nav_px
+                        post_rotate_annotations.append(('tracked', int(xr), int(yr), None))
+                    else:
+                        import cv2
+                        cv2.drawMarker(
+                            vis, (nav_px, nav_py), color_nav,
+                            markerType=cv2.MARKER_TILTED_CROSS, markerSize=16,
+                            thickness=2, line_type=cv2.LINE_AA
+                        )
+                        cv2.putText(
+                            vis, "NAV", (nav_px + 6, nav_py - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_nav, 1, cv2.LINE_AA
+                        )
+            except Exception:
+                pass
             # Rotate for D435i and draw any queued annotations in rotated frame with upright text
             try:
                 if getattr(self, 'current_camera', 'D405') == 'D435i':
@@ -1491,6 +1762,24 @@ class RoboPointMainWindow(QMainWindow):
                             tx = int(xr - tw / 2); ty = int(yr - 55)
                             cv2.putText(vis, line, (tx, ty), font, font_scale, (0, 0, 0), t_bg, cv2.LINE_AA)
                             cv2.putText(vis, line, (tx, ty), font, font_scale, (255, 255, 255), t_fg, cv2.LINE_AA)
+                        elif kind == 'tracked':
+                            nav_color = (255, 0, 255)
+                            cv2.drawMarker(
+                                vis, (int(xr), int(yr)), nav_color,
+                                markerType=cv2.MARKER_TILTED_CROSS, markerSize=16,
+                                thickness=2, line_type=cv2.LINE_AA
+                            )
+                            cv2.putText(
+                                vis, "NAV", (int(xr) + 6, int(yr) - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, nav_color, 1, cv2.LINE_AA
+                            )
+                        elif kind == 'wp':
+                            wp_color = (0, 255, 255)
+                            cv2.circle(vis, (int(xr), int(yr)), 7, wp_color, 2, lineType=cv2.LINE_AA)
+                            cv2.putText(
+                                vis, "WP", (int(xr) + 6, int(yr) - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, wp_color, 1, cv2.LINE_AA
+                            )
             except Exception:
                 pass
             # Draw without PIL to keep GUI smooth
@@ -1778,6 +2067,30 @@ class RoboPointMainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to clean points: {e}")
 
+    def _current_image_rotation_deg(self) -> float:
+        """Return GUI rotation (deg) for the active camera."""
+        cam = (getattr(self, 'current_camera', '') or '').upper()
+        if cam.startswith('D435'):
+            return self._default_rot_d435
+        return 0.0
+
+    def _on_tracked_point(self, msg):
+        """Receive the navigator's tracked pixel so we can display it."""
+        with self._nav_track_lock:
+            if msg is None or msg.point is None:
+                self.latest_nav_tracked_visible = False
+                self.latest_nav_tracked_px = None
+                self.latest_nav_tracked_py = None
+                return
+            visible = bool(msg.point.z >= 0.5)
+            self.latest_nav_tracked_visible = visible
+            if visible:
+                self.latest_nav_tracked_px = float(msg.point.x)
+                self.latest_nav_tracked_py = float(msg.point.y)
+            else:
+                self.latest_nav_tracked_px = None
+                self.latest_nav_tracked_py = None
+
     def on_image_clicked(self, x, y):
         """Handle mouse clicks on the image to set white point position."""
         try:
@@ -1810,6 +2123,7 @@ class RoboPointMainWindow(QMainWindow):
             self.llm_tracked_px, self.llm_tracked_py = int(px), int(py)
             self.llm_tracker = None  # Reset tracker to re-initialize with new point
             self.user_clicked_position = True  # Mark that user manually set the position
+            self._publish_navigation_target(self.llm_tracked_px, self.llm_tracked_py)
             
             # If white_point process is running, restart it with new coordinates
             running = (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)
@@ -1822,7 +2136,14 @@ class RoboPointMainWindow(QMainWindow):
                     ep_m = float(self.extra_push_cm_spin.value()) / 100.0
                 except Exception:
                     ep_m = None
-                self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                self.white_point_proc.start(
+                    self.llm_tracked_px,
+                    self.llm_tracked_py,
+                    self.use_remote_yolo,
+                    0.0,
+                    ep_m,
+                    rotation_deg=self._current_image_rotation_deg(),
+                )
                 self.llm_status.setText("LLM Grasping: Running")
                 # self.llm_status.setText(f"LLM Grasping: Clicked to ({self.llm_tracked_px}, {self.llm_tracked_py})")
             else:
@@ -1832,7 +2153,14 @@ class RoboPointMainWindow(QMainWindow):
                         ep_m = float(self.extra_push_cm_spin.value()) / 100.0
                     except Exception:
                         ep_m = None
-                    self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                    self.white_point_proc.start(
+                        self.llm_tracked_px,
+                        self.llm_tracked_py,
+                        self.use_remote_yolo,
+                        0.0,
+                        ep_m,
+                        rotation_deg=self._current_image_rotation_deg(),
+                    )
                     self.llm_status.setText("LLM Grasping: Running")
                     # self.llm_status.setText(f"LLM Grasping: Running at ({self.llm_tracked_px}, {self.llm_tracked_py})")
                     self.btn_stop_llm.setEnabled(True)
@@ -1848,14 +2176,34 @@ class RoboPointMainWindow(QMainWindow):
                 except Exception:
                     pass
                 # Use fixed options when (re)starting navigation after click
-                stop_dist = 1.0
-                self.base_nav_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_stream, stop_dist, True,
-                                         tilt_down_negative=True, invert_yaw=True)
+                stop_dist = 0.5
+                # Enable forward motion even when navigation restarts after a click.
+                self.base_nav_proc.start(
+                    self.llm_tracked_px,
+                    self.llm_tracked_py,
+                    self.use_remote_stream,
+                    stop_dist,
+                    False,
+                    tilt_down_negative=True,
+                    invert_yaw=False,
+                    rotation_deg=self._current_image_rotation_deg(),
+                )
+                self._publish_navigation_target(self.llm_tracked_px, self.llm_tracked_py)
                 self.nav_status.setText(f"LLM Navigation: Running towards ({self.llm_tracked_px}, {self.llm_tracked_py})")
                 self.nav_stop_btn.setEnabled(True)
                 
         except Exception as e:
             logger.error(f"Failed to handle image click: {e}")
+
+    def _publish_navigation_target(self, px: int, py: int):
+        """Publish the latest navigation target for ROS2 visual servoing."""
+        try:
+            if getattr(self, 'ros_target_pub', None) is None:
+                return
+            camera_name = 'd435i' if getattr(self, 'current_camera', 'D405') == 'D435i' else 'd405'
+            self.ros_target_pub.publish_pixel_target(int(px), int(py), camera_name=camera_name)
+        except Exception as exc:
+            logger.warning(f"Failed to publish ROS navigation target: {exc}")
 
     def on_head_tilt_changed(self, value_deg: float):
         """Debounce and then set the head tilt angle to the requested degrees."""
@@ -1867,44 +2215,74 @@ class RoboPointMainWindow(QMainWindow):
             pass
 
     def _apply_pending_tilt(self):
+        # Use ROS2-based head control instead of stretch_body
         try:
-            from VLServo.pose_utils import set_head_tilt_deg
+            from VLServo.robot_control_ros2 import set_head_tilt_deg
             set_head_tilt_deg(float(self._pending_tilt_deg))
+            logger.info(f"Head tilt set to {self._pending_tilt_deg}° via ROS2")
         except Exception as e:
             logger.warning(f"Head tilt set failed: {e}")
 
     def start_camera(self):
-        # Stop remote subscriber if running locally
+        # Stop any existing camera threads
+        if self.direct_camera_thread is not None:
+            try:
+                self.direct_camera_thread.stop()
+                self.direct_camera_thread.wait(1000)
+            except Exception:
+                pass
+            self.direct_camera_thread = None
+            
+        if self.ros2_camera_thread is not None:
+            try:
+                self.ros2_camera_thread.stop()
+                self.ros2_camera_thread.wait(1000)
+            except Exception:
+                pass
+            self.ros2_camera_thread = None
+        
         if not self.use_remote_stream and self.camera_thread is not None:
             try:
-                self.camera_thread.stop(); self.camera_thread.wait(500)
+                self.camera_thread.stop()
+                self.camera_thread.wait(500)
             except Exception:
                 pass
             self.camera_thread = None
 
-        # Start direct RealSense capture
+        # Get camera selection (always use ROS2 now)
+        cam = self.camera_selector.currentText()
+        
+        # Update current camera for display orientation handling
+        self.current_camera = cam
+        
         try:
-            cam = self.camera_selector.currentText()
-            exposure = self.exposure_selector.currentText()
-            # Update current camera for display orientation handling
-            self.current_camera = cam
-            if self.direct_camera_thread is not None:
-                return
-            self.direct_camera_thread = DirectCameraThread(camera=cam, exposure=exposure)
-            self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
-            self.direct_camera_thread.status_changed.connect(self.on_camera_status)
-            self.direct_camera_thread.start()
-            self.btn_start_sender.setEnabled(False); self.btn_stop_sender.setEnabled(True)
+            # Always use ROS2 subscriber
+            camera_name = 'd405' if cam == 'D405' else 'd435i'
+            self.ros2_camera_thread = ROS2CameraThread(camera_name=camera_name)
+            self.ros2_camera_thread.frame_received.connect(self.on_camera_frame)
+            self.ros2_camera_thread.status_changed.connect(self.on_camera_status)
+            self.ros2_camera_thread.start()
+                
+            self.btn_start_sender.setEnabled(False)
+            self.btn_stop_sender.setEnabled(True)
         except Exception as e:
-            QMessageBox.critical(self, "Camera", f"Failed to start: {e}")
+            import traceback
+            QMessageBox.critical(self, "Camera", f"Failed to start: {e}\n{traceback.format_exc()}")
 
     def stop_camera(self):
         try:
             if self.direct_camera_thread is not None:
-                self.direct_camera_thread.stop(); self.direct_camera_thread.wait(1000)
+                self.direct_camera_thread.stop()
+                self.direct_camera_thread.wait(1000)
+                self.direct_camera_thread = None
+                
+            if self.ros2_camera_thread is not None:
+                self.ros2_camera_thread.stop()
+                self.ros2_camera_thread.wait(1000)
+                self.ros2_camera_thread = None
         finally:
-            self.direct_camera_thread = None
-            self.btn_start_sender.setEnabled(True); self.btn_stop_sender.setEnabled(False)
+            self.btn_start_sender.setEnabled(True)
+            self.btn_stop_sender.setEnabled(False)
 
     def start_services(self):
         try:
@@ -1935,10 +2313,11 @@ class RoboPointMainWindow(QMainWindow):
                 self.current_camera = 'D435i'
             except Exception:
                 pass
-            # Go to a fixed start pose (head/gripper forward), using current tilt setting
+            # Move to start pose using ROS2 control
             try:
-                from VLServo.pose_utils import go_to_start_pose
+                from VLServo.robot_control_ros2 import go_to_start_pose
                 go_to_start_pose(head_tilt_deg=float(self.head_tilt_deg.value()))
+                logger.info("Robot moved to start pose via ROS2")
             except Exception as e:
                 logger.warning(f"Failed to set start pose: {e}")
             # Determine target point
@@ -1950,15 +2329,24 @@ class RoboPointMainWindow(QMainWindow):
                 px_py = (cx, cy)
             if px_py is not None:
                 # Fixed stop distance and control options
-                stop_dist = 1.0
+                stop_dist = 0.5
+                self._publish_navigation_target(px_py[0], px_py[1])
                 try:
                     if self.base_nav_proc.proc is not None and self.base_nav_proc.proc.poll() is None:
                         self.base_nav_proc.stop()
                 except Exception:
                     pass
-                # Fixed controls: tilt-only, down-negative, inverted yaw
-                self.base_nav_proc.start(px_py[0], px_py[1], self.use_remote_stream, stop_dist, True,
-                                         tilt_down_negative=True, invert_yaw=True)
+                # Enable full navigation: forward motion + rotation, ROS2 correct yaw
+                self.base_nav_proc.start(
+                    px_py[0],
+                    px_py[1],
+                    self.use_remote_stream,
+                    stop_dist,
+                    False,  # Changed to False - enable forward motion
+                    tilt_down_negative=True,
+                    invert_yaw=False,
+                    rotation_deg=self._current_image_rotation_deg(),
+                )  # Changed to False for ROS2
                 self.nav_status.setText(f"LLM Navigation: Running at ({px_py[0]}, {px_py[1]})")
                 self.nav_start_btn.setEnabled(True)
                 self.nav_stop_btn.setEnabled(True)
@@ -2195,7 +2583,14 @@ class RoboPointMainWindow(QMainWindow):
                                     ep_m = float(self.extra_push_cm_spin.value()) / 100.0
                                 except Exception:
                                     ep_m = None
-                                self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                                self.white_point_proc.start(
+                                    self.llm_tracked_px,
+                                    self.llm_tracked_py,
+                                    self.use_remote_yolo,
+                                    0.0,
+                                    ep_m,
+                                    rotation_deg=self._current_image_rotation_deg(),
+                                )
                                 self.llm_status.setText(f"LLM Grasping: Running at ({self.llm_tracked_px}, {self.llm_tracked_py})")
                                 self.btn_stop_llm.setEnabled(True)
                             except Exception:
@@ -2297,6 +2692,11 @@ class RoboPointMainWindow(QMainWindow):
             # Stop nav/grasp external processes
             try:
                 self.base_nav_proc.stop()
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'ros_target_pub', None) is not None:
+                    self.ros_target_pub.shutdown()
             except Exception:
                 pass
             self.stop_services()

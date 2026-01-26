@@ -1,5 +1,5 @@
 services:
-  VLPoint-inference:
+  vla-inference:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -7,9 +7,9 @@ services:
         GITHUB_TOKEN: ${GITHUB_TOKEN-}
         ENABLE_STRETCH3: ${ENABLE_STRETCH3-0}
         STRETCH3_REPO: ${STRETCH3_REPO-https://github.com/hello-robot/stretch3.git}
-    image: vlpoint-inference:latest
-    container_name: VLPoint-inference
-    hostname: VLPoint-dev
+    image: vla-inference:latest
+    container_name: vla-inference
+    hostname: vla-dev
     user: "0:0"
     privileged: true
     network_mode: host
@@ -32,6 +32,8 @@ services:
       - ../ros2_ws:/workspace/ros2_ws
       # Mount environment script so changes reflect without rebuilding image
       - ../environment.sh:/workspace/environment.sh:ro
+      # Mount wit token file
+      - ../wit_token.txt:/workspace/wit_token.txt:ro
       # Mount only the fleet calibration folder read-only into HELLO_FLEET_PATH
       - ${HOME}/stretch3/stretch-se3-3092:/root/stretch_user/stretch-se3-3092:ro
       # Mount hello_helpers from host system for visual servoing

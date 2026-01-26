@@ -27,6 +27,10 @@ setup(
         'console_scripts': [
             # Console entry to launch the VLPoint GUI
             'vlservoing = VLServo.vlservoing:main',
+            # ROS2 nodes
+            'visual_servoing_ros2_node = VLServo.visual_servoing_ros2_node:main',
+            'camera_subscriber = VLServo.camera_ros2_subscriber:main',
+            'base_motion_ros2 = VLServo.base_motion_ros2:main',
         ],
     },
 )
