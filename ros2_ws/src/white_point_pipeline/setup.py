@@ -14,6 +14,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'),
+            glob('config/*.rviz') + glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,6 +30,7 @@ setup(
             'white_point_to_3d = white_point_pipeline.white_point_to_3d:main',
             'white_point_base_motion = white_point_pipeline.white_point_base_motion:main',
             'white_point_full_motion = white_point_pipeline.white_point_full_motion:main',
+            'camera_tf_calibrator = white_point_pipeline.camera_tf_calibrator:main',
         ],
     },
 )

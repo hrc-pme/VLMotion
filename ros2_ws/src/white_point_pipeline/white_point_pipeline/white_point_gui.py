@@ -327,7 +327,7 @@ class ServerProcess:
 
     def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
                            port=22000, worker_url="http://10.0.0.1:22000",
-                           model_path="PME033541/vla2.7", load_4bit=True):
+                           model_path="PME033541/vla4", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
@@ -586,7 +586,7 @@ class WhitePointGUI(Node):
 class MainWindow(QMainWindow):
     """主視窗"""
     def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.1:11000", 
-                 model_path="PME033541/vla2.7"):
+                 model_path="PME033541/vla4"):
         super().__init__()
         self.ros_node = ros_node
         self.signal_bridge = signal_bridge
@@ -862,7 +862,7 @@ class MainWindow(QMainWindow):
             self.conversation_state.append_message(self.conversation_state.roles[1], None)
             
             # 決定對話模板（基於模型名稱）
-            model_name = "vla2.7"  # 使用註冊在 Controller 的模型名稱
+            model_name = "vla4"  # 使用註冊在 Controller 的模型名稱
             template_name = 'vicuna_v1'  # Vicuna 模型使用 vicuna_v1 模板
             
             # 如果是新對話，使用適當的模板
@@ -1084,7 +1084,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
     parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
                        help="LLM controller URL")
-    parser.add_argument("--model-path", type=str, default="PME033541/vla2.7",
+    parser.add_argument("--model-path", type=str, default="PME033541/vla4",
                        help="Model path to load in the GUI")
     parser.add_argument("--ros-args", nargs=argparse.REMAINDER, help="ROS arguments")
     
