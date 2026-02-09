@@ -273,6 +273,44 @@ class WhitePointTo3D(Node):
     def wrap_pi(self, a):
         """將角度包裹到 [-π, π]"""
         return (a + np.pi) % (2 * np.pi) - np.pi
+    
+    def project_point_to_plane(self, point, plane_normal, plane_point):
+        """
+        將點投影到平面上（深度校正）
+        
+        平面方程：n·(r - r0) = 0
+        投影公式：p_proj = p - [(p - r0)·n] × n
+        
+        這個函數用於校正深度相機的角度相關誤差：
+        - 深度相機在斜角度觀察時，測量值會偏離真實表面
+        - 通過將點投影到擬合的牆面平面上，可以獲得更準確的位置
+        
+        Args:
+            point: 要投影的點 (x, y, z)
+            plane_normal: 平面法向量 (nx, ny, nz)，應已歸一化
+            plane_point: 平面上的參考點 (x0, y0, z0)
+        
+        Returns:
+            投影後的點 (x, y, z) numpy array
+        """
+        p = np.array(point, dtype=np.float64)
+        n = np.array(plane_normal, dtype=np.float64)
+        r0 = np.array(plane_point, dtype=np.float64)
+        
+        # 確保法向量歸一化
+        n_norm = np.linalg.norm(n)
+        if n_norm < 1e-9:
+            self.get_logger().warn('Plane normal has zero magnitude, cannot project')
+            return p
+        n = n / n_norm
+        
+        # 計算點到平面的有向距離
+        dist = np.dot(p - r0, n)
+        
+        # 投影到平面
+        p_proj = p - dist * n
+        
+        return p_proj
 
     def create_pointcloud2(self, points_xyz, frame_id, stamp):
         """
@@ -572,7 +610,35 @@ class WhitePointTo3D(Node):
                     n = self.fit_plane_normal_pca(wall_points)
                     nx, ny = float(n[0]), float(n[1])
                     
+                    # ========================================
+                    # 深度校正：將原始點投影到擬合的平面上
+                    # ========================================
+                    # 計算平面中心點（作為參考點）
+                    plane_center = wall_points.mean(axis=0)
+                    
+                    # 原始點（可能因深度測量誤差偏離真實牆面）
+                    original_point = np.array([pt_base.point.x, pt_base.point.y, pt_base.point.z])
+                    
+                    # 投影到擬合的平面上（校正深度誤差）
+                    corrected_point = self.project_point_to_plane(original_point, n, plane_center)
+                    
+                    # 計算校正量
+                    correction_distance = np.linalg.norm(corrected_point - original_point)
+                    
+                    # 更新發布的點為校正後的點
+                    pt_base.point.x = float(corrected_point[0])
+                    pt_base.point.y = float(corrected_point[1])
+                    pt_base.point.z = float(corrected_point[2])
+                    
+                    self.get_logger().info(
+                        f'Depth correction applied:\n'
+                        f'  Original:  ({original_point[0]:.3f}, {original_point[1]:.3f}, {original_point[2]:.3f})\n'
+                        f'  Corrected: ({corrected_point[0]:.3f}, {corrected_point[1]:.3f}, {corrected_point[2]:.3f})\n'
+                        f'  Correction distance: {correction_distance*100:.1f} cm'
+                    )
+                    
                     # 發布修正後的牆面法向量 marker（紅色箭頭）
+                    # 使用校正後的點位置
                     normal_marker = self.create_normal_marker(
                         [pt_base.point.x, pt_base.point.y, pt_base.point.z],
                         n

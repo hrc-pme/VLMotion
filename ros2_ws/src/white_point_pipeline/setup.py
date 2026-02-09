@@ -31,6 +31,7 @@ setup(
             'white_point_base_motion = white_point_pipeline.white_point_base_motion:main',
             'white_point_full_motion = white_point_pipeline.white_point_full_motion:main',
             'camera_tf_calibrator = white_point_pipeline.camera_tf_calibrator:main',
+            'parallax_check = white_point_pipeline.parallax_check:main',
         ],
     },
 )

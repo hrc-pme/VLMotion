@@ -105,7 +105,7 @@ from PIL import Image as PILImage, ImageDraw
 # 現在才導入 PyQt5
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTextEdit, QLineEdit, QPushButton, QSplitter
+    QLabel, QTextEdit, QLineEdit, QPushButton, QSplitter, QMessageBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QObject
 from PyQt5.QtGui import QImage, QPixmap, QFont
@@ -424,6 +424,7 @@ class ROSSignalBridge(QObject):
     image_signal = pyqtSignal(object)
     model_output_signal = pyqtSignal(str)
     point3d_signal = pyqtSignal(float, float, float)
+    selection_phase_signal = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
@@ -523,6 +524,14 @@ class WhitePointGUI(Node):
             self.model_output_callback,
             10
         )
+        
+        # 訂閱選點階段（由 full motion 發布）
+        self.selection_phase_sub = self.create_subscription(
+            String,
+            '/white_point_selection_phase',
+            self.selection_phase_callback,
+            10
+        )
 
         # 發布使用者輸入
         self.user_input_pub = self.create_publisher(String, '/user_input', 10)
@@ -565,6 +574,10 @@ class WhitePointGUI(Node):
         """接收模型輸出"""
         self.signal_bridge.model_output_signal.emit(msg.data)
         self.get_logger().info(f"Model output: {msg.data}")
+    
+    def selection_phase_callback(self, msg: String):
+        """接收選點階段更新"""
+        self.signal_bridge.selection_phase_signal.emit(msg.data.strip())
 
     def publish_pixel(self, x: int, y: int):
         """發布點擊的像素座標"""
@@ -610,6 +623,7 @@ class MainWindow(QMainWindow):
         self.voice_capture_duration = 4.0
         self.voice_available, self.voice_unavailable_reason = voice_support_status()
         self.is_processing_voice = False
+        self.selection_phase = "select_first_point"
         
         self.setup_ui()
         self.connect_signals()
@@ -741,6 +755,7 @@ class MainWindow(QMainWindow):
         self.signal_bridge.image_signal.connect(self.update_image)
         self.signal_bridge.model_output_signal.connect(self.add_model_output)
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
+        self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
         
         # Qt 信號
         self.image_label.clicked.connect(self.on_image_clicked)
@@ -775,8 +790,84 @@ class MainWindow(QMainWindow):
 
     def on_image_clicked(self, x: int, y: int):
         """處理影像點擊事件"""
+        self.confirm_and_publish_pixel(x, y, source="manual")
+    
+    def phase_to_text(self, phase: str):
+        mapping = {
+            "select_first_point": "請選第一個點（點選後會詢問確認）",
+            "moving_to_approach": "前往準備點中（暫不接受點選）",
+            "waiting_second_point": "已到準備點，請選第二個點（點選後會詢問確認，並再次調整高度）",
+            "moving_to_target": "前往目標點中（暫不接受點選）",
+        }
+        return mapping.get(phase, f"未知階段：{phase}")
+
+    def update_selection_phase(self, phase: str):
+        """更新目前選點流程狀態"""
+        if not phase:
+            return
+        self.selection_phase = phase
+    
+    def append_point_preview(self, pixel_points):
+        """在右側輸出區插入帶叉叉標註的影像"""
+        if not pixel_points or self.current_image is None:
+            return
+        try:
+            rgb_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            pil_image = PILImage.fromarray(rgb_image)
+            annotated_image = visualize_2d(pil_image, pixel_points, [], scale=1.0)
+            annotated_cv = cv2.cvtColor(np.array(annotated_image), cv2.COLOR_RGB2BGR)
+
+            h_img, w_img = annotated_cv.shape[:2]
+            bytes_per_line = 3 * w_img
+            rgb_for_qt = cv2.cvtColor(annotated_cv, cv2.COLOR_BGR2RGB)
+            q_image = QImage(rgb_for_qt.data, w_img, h_img, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+
+            max_width = self.output_text.width() - 40
+            if pixmap.width() > max_width:
+                pixmap = pixmap.scaled(
+                    max_width,
+                    int(pixmap.height() * max_width / pixmap.width()),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+
+            cursor = self.output_text.textCursor()
+            cursor.movePosition(cursor.End)
+            cursor.insertText("\n")
+            cursor.insertImage(pixmap.toImage())
+            self.output_text.setTextCursor(cursor)
+        except Exception as e:
+            print(f"Failed to create point preview: {e}", file=sys.stderr)
+    
+    def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual"):
+        """依照階段要求，先詢問確認再發布像素點"""
+        allowed_phases = {"select_first_point", "waiting_second_point"}
+        if self.selection_phase not in allowed_phases:
+            self.output_text.append(
+                f"<b style='color: #FF9800;'>提示:</b> 目前階段為「{self.phase_to_text(self.selection_phase)}」，暫不接受新點。"
+            )
+            return
+
+        if source == "manual":
+            self.append_point_preview([(int(x), int(y))])
+
+        is_second = (self.selection_phase == "waiting_second_point")
+        ordinal = "第二次" if is_second else "第一次"
+        source_text = "模型建議點"
+
+        reply = QMessageBox.question(
+            self,
+            "模型建議點",
+            f"{source_text}\n座標: ({x}, {y})\n\n要選擇這個{ordinal}點嗎？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
         self.ros_node.publish_pixel(x, y)
-        # 不顯示點擊訊息
 
     def send_user_input(self):
         """發送使用者輸入並查詢 LLM"""
@@ -924,49 +1015,12 @@ class MainWindow(QMainWindow):
                 self.llm_points.append((px, py))
                 pixel_points.append((px, py))
             
-            # 建立視覺化圖片
-            try:
-                # 轉換 BGR 到 RGB
-                rgb_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
-                pil_image = PILImage.fromarray(rgb_image)
-                
-                # 在圖片上繪製點
-                annotated_image = visualize_2d(pil_image, pixel_points, [], scale=1.0)
-                
-                # 轉換回 cv2 格式並顯示
-                annotated_cv = cv2.cvtColor(np.array(annotated_image), cv2.COLOR_RGB2BGR)
-                
-                # 轉換為 QPixmap 並顯示在文字區域
-                h_img, w_img = annotated_cv.shape[:2]
-                bytes_per_line = 3 * w_img
-                rgb_for_qt = cv2.cvtColor(annotated_cv, cv2.COLOR_BGR2RGB)
-                q_image = QImage(rgb_for_qt.data, w_img, h_img, bytes_per_line, QImage.Format_RGB888)
-                pixmap = QPixmap.fromImage(q_image)
-                
-                # 縮放圖片以適應文字區域寬度
-                max_width = self.output_text.width() - 40
-                if pixmap.width() > max_width:
-                    pixmap = pixmap.scaled(max_width, int(pixmap.height() * max_width / pixmap.width()), 
-                                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                
-                # 插入圖片到文字區域（減少前後空白）
-                cursor = self.output_text.textCursor()
-                cursor.movePosition(cursor.End)
-                cursor.insertText("\n")  # 只加一個換行
-                cursor.insertImage(pixmap.toImage())
-                self.output_text.setTextCursor(cursor)
-                
-                # 不顯示「找到 X 個點」的訊息
-                
-            except Exception as e:
-                print(f"Failed to create visualization: {e}", file=sys.stderr)
-                import traceback
-                traceback.print_exc()
+            self.append_point_preview(pixel_points)
             
             # 如果只有一個點，自動發布
             if len(self.llm_points) == 1:
                 px, py = self.llm_points[0]
-                self.ros_node.publish_pixel(int(px), int(py))
+                self.confirm_and_publish_pixel(int(px), int(py), source="llm")
     
     def on_controller_connected(self, worker_addr: str):
         """Controller 連接成功"""
