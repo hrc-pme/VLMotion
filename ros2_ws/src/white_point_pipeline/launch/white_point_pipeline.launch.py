@@ -1,28 +1,61 @@
 #!/usr/bin/env python3
+"""
+White Point Pipeline Launch 檔
+======================================
+在下方修改 CAMERA 即可切換相機，所有 topic、frame、TF 自動跟著變。
+相機配置存在 config/cameras.yaml。
+"""
+
+# ╔══════════════════════════════════════════╗
+# ║  要換相機？只改這一行！  'd415' / 'd435i' ║
+# ╚══════════════════════════════════════════╝
+CAMERA = 'd435i'
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
-import yaml
-import os
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from ament_index_python.packages import get_package_share_directory
+import yaml, os
 
 
-def load_calibration_defaults(camera_name='d435i'):
-    """從 camera_tf_calibration package 的配置文件載入校準默認值"""
+# ─────────────────────────────────────────────
+# 工具函數
+# ─────────────────────────────────────────────
+
+def load_camera_config(camera_name):
+    """從 config/cameras.yaml 載入指定相機的配置"""
+    pkg_dir = get_package_share_directory('white_point_pipeline')
+    config_path = os.path.join(pkg_dir, 'config', 'cameras.yaml')
+
+    with open(config_path, 'r') as f:
+        all_cameras = yaml.safe_load(f)
+
+    if camera_name not in all_cameras:
+        available = ', '.join(all_cameras.keys())
+        raise ValueError(
+            f"未知的相機 '{camera_name}'。可用選項: {available}\n"
+            f"配置檔: {config_path}"
+        )
+    return all_cameras[camera_name]
+
+
+def load_calibration_defaults(camera_name):
+    """從 ~/.config/camera_tf_calibration/ 載入校準默認值"""
     defaults = {
         'x': '0.0', 'y': '0.0', 'z': '0.0',
-        'roll': '0.0', 'pitch': '0.0', 'yaw': '0.0'
+        'roll': '0.0', 'pitch': '0.0', 'yaw': '0.0',
     }
-    
-    # 優先從新的 camera_tf_calibration 配置目錄載入
-    calibration_file = os.path.expanduser(f'~/.config/camera_tf_calibration/{camera_name}_calibration.yaml')
-    
-    # 如果不存在，嘗試舊的配置位置
+
+    calibration_file = os.path.expanduser(
+        f'~/.config/camera_tf_calibration/{camera_name}_calibration.yaml'
+    )
     if not os.path.exists(calibration_file):
-        calibration_file = os.path.expanduser('~/.config/white_point_pipeline/camera_tf_calibration.yaml')
-    
+        calibration_file = os.path.expanduser(
+            '~/.config/white_point_pipeline/camera_tf_calibration.yaml'
+        )
+
     if os.path.exists(calibration_file):
         try:
             with open(calibration_file, 'r') as f:
@@ -38,71 +71,43 @@ def load_calibration_defaults(camera_name='d435i'):
             print(f'       旋轉: R={defaults["roll"]} P={defaults["pitch"]} Y={defaults["yaw"]} (rad)')
         except Exception as e:
             print(f'[WARN] 無法載入校準配置: {e}')
-    
+
     return defaults
 
 
-def generate_launch_description():
+# ─────────────────────────────────────────────
+# OpaqueFunction：根據 camera 參數動態產生節點
+# ─────────────────────────────────────────────
 
-    # -------------------------
-    # Get package directory for config files
-    # -------------------------
-    pkg_share = FindPackageShare('white_point_pipeline')
-    
-    # 載入校準默認值
-    cal_defaults = load_calibration_defaults()
+def launch_setup(context, *args, **kwargs):
+    camera_name = CAMERA
+    controller_url = LaunchConfiguration('controller_url').perform(context)
+    model_path = LaunchConfiguration('model_path').perform(context)
 
-    # -------------------------
-    # Launch Arguments (相機 TF 變換參數)
-    # -------------------------
-    # 位置參數 - 默認值從配置文件載入
-    camera_tf_x_arg = DeclareLaunchArgument(
-        'camera_tf_x', default_value=cal_defaults['x'],
-        description='D435i X offset (meters)')
-    camera_tf_y_arg = DeclareLaunchArgument(
-        'camera_tf_y', default_value=cal_defaults['y'],
-        description='D435i Y offset (meters)')
-    camera_tf_z_arg = DeclareLaunchArgument(
-        'camera_tf_z', default_value=cal_defaults['z'],
-        description='D435i Z offset (meters)')
-    
-    # 旋轉參數 (弧度) - 默認值從配置文件載入
-    camera_tf_roll_arg = DeclareLaunchArgument(
-        'camera_tf_roll', default_value=cal_defaults['roll'],
-        description='D435i roll rotation (radians)')
-    camera_tf_pitch_arg = DeclareLaunchArgument(
-        'camera_tf_pitch', default_value=cal_defaults['pitch'],
-        description='D435i pitch rotation (radians)')
-    camera_tf_yaw_arg = DeclareLaunchArgument(
-        'camera_tf_yaw', default_value=cal_defaults['yaw'],
-        description='D435i yaw rotation (radians)')
-    
-    mode_arg = DeclareLaunchArgument(
-        'mode',
-        default_value='navigation',
-        description='Stretch driver mode (position, navigation, or manipulation)'
-    )
+    cam = load_camera_config(camera_name)
+    cal = load_calibration_defaults(camera_name)
 
-    controller_url_arg = DeclareLaunchArgument(
-        'controller_url',
-        default_value='http://10.0.0.1:11000',
-        description='Controller URL for VLPoint server'
-    )
+    prefix = cam['topic_prefix']          # e.g. '/d415'
+    serial = cam['serial_no']
+    optical_frame = cam['color_optical_frame']
+    link_name = cam['link_name']
+    link_adjusted = cam['link_adjusted_name']
 
-    model_path_arg = DeclareLaunchArgument(
-        'model_path',
-        default_value='wentao-yuan/robopoint-v1-vicuna-v1.5-13b',
-        description='Model to load in the VLPoint GUI'
-    )
+    # 組合 topic 名稱
+    color_topic = f'{prefix}/color/image_raw'
+    depth_topic = f'{prefix}/aligned_depth_to_color/image_raw'
+    camera_info_topic = f'{prefix}/color/camera_info'
 
-    mode = LaunchConfiguration('mode')
-    controller_url = LaunchConfiguration('controller_url')
-    model_path = LaunchConfiguration('model_path')
+    print(f'[white_point_pipeline] 使用相機: {camera_name}')
+    print(f'  color topic:  {color_topic}')
+    print(f'  depth topic:  {depth_topic}')
+    print(f'  camera frame: {optical_frame}')
 
-    # -------------------------
-    # 1. Stretch Driver  ros2 launch stretch_core stretch_driver.launch.py mode:=navigation broadcast_odom_tf:=True
-    # -------------------------
-    stretch_driver = IncludeLaunchDescription(
+    nodes = []
+   # -------------------------
+   #Stretch Driver ros2 launch stretch_core stretch_driver.launch.py mode:=navigation broadcast_odom_tf:=True
+   # -------------------------
+    nodes.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
                 FindPackageShare('stretch_core'),
@@ -111,66 +116,46 @@ def generate_launch_description():
             ])
         ]),
         launch_arguments={
-            'mode': mode,
-            'broadcast_odom_tf': 'True',  # 發布 odom frame 給全方位運動控制使用
+            'mode': LaunchConfiguration('mode'),
+            'broadcast_odom_tf': 'True',
         }.items()
-    )
+    ))
 
-    # -------------------------
-    # 2. D435i 相機 TF 變換發布器
-    # -------------------------
-    # 校準方式：
-    # 1. 運行 ros2 run white_point_pipeline camera_tf_calibrator 進行互動式校準
-    # 2. 校準值會保存到 ~/.config/white_point_pipeline/camera_tf_calibration.yaml
-    # 3. launch 時會自動載入，或用 launch 參數覆蓋
-    # -------------------------
-    
-    # 相機 TF 連接器 - 使用載入的校準值或 launch 參數
-    d435i_link_connector = Node(
+    # ── 1. 相機 TF 連接器 ──
+    nodes.append(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='d435i_link_connector',
+        name=cam['link_connector_name'],
         arguments=[
-            '--x', LaunchConfiguration('camera_tf_x'),
-            '--y', LaunchConfiguration('camera_tf_y'),
-            '--z', LaunchConfiguration('camera_tf_z'),
-            '--roll', LaunchConfiguration('camera_tf_roll'),
-            '--pitch', LaunchConfiguration('camera_tf_pitch'),
-            '--yaw', LaunchConfiguration('camera_tf_yaw'),
+            '--x', cal['x'], '--y', cal['y'], '--z', cal['z'],
+            '--roll', cal['roll'], '--pitch', cal['pitch'], '--yaw', cal['yaw'],
             '--frame-id', 'camera_bottom_screw_frame',
-            '--child-frame-id', 'd435i_link'
-        ]
-    )
-    
-    # 這個節點會在 d435i_link 和 d435i_link_adjusted 之間發布靜態變換
-    # 允許您調整相機的位置和角度,而不需要修改 URDF
-    d435i_tf_publisher = Node(
+            '--child-frame-id', link_name,
+        ],
+    ))
+
+    # ── 2. 相機 TF 調整器 ──
+    nodes.append(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='d435i_tf_adjuster',
+        name=cam['tf_publisher_name'],
         arguments=[
-            '--x', LaunchConfiguration('camera_tf_x'),
-            '--y', LaunchConfiguration('camera_tf_y'),
-            '--z', LaunchConfiguration('camera_tf_z'),
-            '--roll', LaunchConfiguration('camera_tf_roll'),
-            '--pitch', LaunchConfiguration('camera_tf_pitch'),
-            '--yaw', LaunchConfiguration('camera_tf_yaw'),
-            '--frame-id', 'link_head_tilt',  # 父 frame (頭部傾斜關節)
-            '--child-frame-id', 'd435i_link_adjusted'  # 調整後的相機 frame
-        ]
-    )
+            '--x', cal['x'], '--y', cal['y'], '--z', cal['z'],
+            '--roll', cal['roll'], '--pitch', cal['pitch'], '--yaw', cal['yaw'],
+            '--frame-id', 'link_head_tilt',
+            '--child-frame-id', link_adjusted,
+        ],
+    ))
 
-    # -------------------------
-    # 3. RealSense D435i Head Camera
-    # -------------------------
-    d435i_camera = Node(
+    # ── 3. RealSense 相機節點 ──
+    nodes.append(Node(
         package='realsense2_camera',
         executable='realsense2_camera_node',
-        name='d435i',
+        name=camera_name,
         namespace='',
         parameters=[{
-            'camera_name': 'd435i',
-            'serial_no': '239122070936',
+            'camera_name': camera_name,
+            'serial_no': serial,
             'enable_color': True,
             'enable_depth': True,
             'align_depth.enable': True,
@@ -179,100 +164,82 @@ def generate_launch_description():
             'rgb_camera.profile': '640x480x30',
             'color0.enable_auto_exposure': True,
             'color0.auto_exposure_priority': True,
-            'publish_tf': True,  # 啟用 TF 發布以顯示點雲
-            'tf_publish_rate': 0.0,  # 只發布靜態 TF
+            'publish_tf': True,
+            'tf_publish_rate': 0.0,
             'pointcloud.enable': True,
-            'pointcloud.stream_filter': 2,  # 2 = color stream
+            'pointcloud.stream_filter': 2,
             'pointcloud.allow_no_texture_points': False,
         }],
-        output='screen'
-    )
+        output='screen',
+    ))
 
-    # -------------------------
-    # 3. RealSense D405 Wrist Camera
-    # -------------------------
-    # d405_camera = Node(
-    #     package='realsense2_camera',
-    #     executable='realsense2_camera_node',
-    #     name='d405',
-    #     namespace='',
-    #     parameters=[{
-    #         'camera_name': 'd405',
-    #         'serial_no': '218622277570',
-    #         'enable_color': True,
-    #         'enable_depth': True,
-    #         'align_depth.enable': True,
-    #         'depth_module.profile': '640x480x30',
-    #         'rgb_camera.profile': '640x480x30',
-    #         'publish_tf': False,
-    #     }],
-    #     output='screen'
-    # )
-
-    # ===============================================
-    # 4. White Point GUI  (顯示相機＋滑鼠點白點)
-    # ===============================================
-    white_point_gui = Node(
+    # ── 4. White Point GUI ──
+    nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_gui',
         name='white_point_gui',
         output='screen',
         parameters=[{
-            # 如果你的 GUI 想用 D405 改成 /d405/color/image_raw
-            'color_topic': '/d435i/color/image_raw'
+            'color_topic': color_topic,
         }],
         arguments=[
             '--controller-url', controller_url,
             '--model-path', model_path,
-        ]
-    )
+        ],
+    ))
 
-    # ===============================================
-    # 5. Pixel → TF → 3D Base Link
-    # ===============================================
-    white_point_to_3d = Node(
+    # ── 5. Pixel → TF → 3D ──
+    nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_to_3d',
         name='white_point_to_3d',
         output='screen',
         parameters=[{
-            'depth_topic': '/d435i/depth/image_rect_raw',
-            'camera_info_topic': '/d435i/depth/camera_info',
-            'camera_frame': 'd435i_depth_optical_frame'
-        }]
-    )
+            'depth_topic': depth_topic,
+            'camera_info_topic': camera_info_topic,
+            'camera_frame': optical_frame,
+        }],
+    ))
 
-    # ===============================================
-    # 6. Full Motion Controller (Base + Lift + Arm)
-    # ===============================================
-    white_point_full_motion = Node(
+    # ── 6. Full Motion Controller ──
+    nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_full_motion',
         name='white_point_full_motion',
-        output='screen'
-    )
+        output='screen',
+        parameters=[{
+            'depth_topic': depth_topic,
+            'camera_info_topic': camera_info_topic,
+            'camera_frame': optical_frame,
+        }],
+    ))
 
-    # -------------------------
-    # Return final launch description
-    # -------------------------
+    return nodes
+
+
+# ─────────────────────────────────────────────
+# Launch Description
+# ─────────────────────────────────────────────
+
+def generate_launch_description():
     return LaunchDescription([
-        # Launch 參數
-        camera_tf_x_arg,
-        camera_tf_y_arg,
-        camera_tf_z_arg,
-        camera_tf_roll_arg,
-        camera_tf_pitch_arg,
-        camera_tf_yaw_arg,
-        mode_arg,
-        controller_url_arg,
-        model_path_arg,
-        # 節點
-        stretch_driver,
-        d435i_link_connector,  # 相機 TF（從 base_link）
-        d435i_tf_publisher,  # TF 變換發布器
-        d435i_camera,
-        # d405_camera,
-        white_point_gui,
-        white_point_to_3d,
-        white_point_full_motion,
+        # === Launch 參數 ===
+        DeclareLaunchArgument(
+            'mode',
+            default_value='navigation',
+            description='Stretch driver mode (position / navigation / manipulation)',
+        ),
+        DeclareLaunchArgument(
+            'controller_url',
+            default_value='http://10.0.0.1:11000',
+            description='Controller URL for VLPoint server',
+        ),
+        DeclareLaunchArgument(
+            'model_path',
+            default_value='PME033541/vla9',
+            description='Model to load in the VLPoint GUI',
+        ),
+
+        # === 動態產生相機 + pipeline 節點 ===
+        OpaqueFunction(function=launch_setup),
     ])

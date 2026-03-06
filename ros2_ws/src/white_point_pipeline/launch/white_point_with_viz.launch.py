@@ -10,12 +10,12 @@ import os
 def generate_launch_description():
     pkg_dir = get_package_share_directory('white_point_pipeline')
     rviz_config = os.path.join(pkg_dir, 'config', 'white_point_visualization.rviz')
-    
-    # 包含原始的 white_point_pipeline.launch.py
+
+    # 直接 include white_point_pipeline.launch.py（相機在那邊的 CAMERA 變數改）
     original_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_dir, 'launch', 'white_point_pipeline.launch.py')
-        )
+        ),
     )
     
     # 發布 map -> odom 靜態變換（身份變換，map 和 odom 重合）

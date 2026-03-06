@@ -27,11 +27,10 @@ setup(
     entry_points={
         'console_scripts': [
             'white_point_gui = white_point_pipeline.white_point_gui:main',
+            'white_point_gui_standalone = white_point_pipeline.white_point_gui_standalone:main',
             'white_point_to_3d = white_point_pipeline.white_point_to_3d:main',
-            'white_point_base_motion = white_point_pipeline.white_point_base_motion:main',
             'white_point_full_motion = white_point_pipeline.white_point_full_motion:main',
             'camera_tf_calibrator = white_point_pipeline.camera_tf_calibrator:main',
-            'parallax_check = white_point_pipeline.parallax_check:main',
         ],
     },
 )

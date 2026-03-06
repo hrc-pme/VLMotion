@@ -34,8 +34,8 @@ services:
       - ../environment.sh:/workspace/environment.sh:ro
       # Mount wit token file
       - ../wit_token.txt:/workspace/wit_token.txt:ro
-      # Mount only the fleet calibration folder read-only into HELLO_FLEET_PATH
-      - ${HOME}/stretch3/stretch-se3-3092:/root/stretch_user/stretch-se3-3092:ro
+      # Mount only the fleet calibration folder read-write into HELLO_FLEET_PATH (需要寫入校準資料)
+      - ${HOME}/stretch3/stretch-se3-3092:/root/stretch_user/stretch-se3-3092:rw
       # Mount hello_helpers from host system for visual servoing
       - ${HOME}/.local/lib/python3.10/site-packages/hello_helpers:/usr/local/lib/python3.10/dist-packages/hello_helpers:ro
       # Optional: mount a local clone of stretch3 to bypass cloning in Dockerfile

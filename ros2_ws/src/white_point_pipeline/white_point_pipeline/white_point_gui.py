@@ -4,6 +4,8 @@ import os
 import ctypes
 import io
 import wave
+import base64
+import datetime
 
 # Silence ALSA warnings when initializing PyAudio
 _alsa_handle = None
@@ -327,7 +329,7 @@ class ServerProcess:
 
     def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
                            port=22000, worker_url="http://10.0.0.1:22000",
-                           model_path="PME033541/vla4", load_4bit=True):
+                           model_path="PME033541/vla9", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
@@ -498,10 +500,15 @@ class WhitePointGUI(Node):
         self.bridge = CvBridge()
         self.signal_bridge = signal_bridge
 
+        # 可配置的相機 color topic（由 launch 檔根據 CAMERA 變數自動設定）
+        self.declare_parameter('color_topic', '')
+        color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
+        self.get_logger().info(f'Subscribing to color topic: {color_topic}')
+
         # 訂閱顏色影像
         self.image_sub = self.create_subscription(
             Image,
-            '/d435i/color/image_raw',
+            color_topic,
             self.image_callback,
             10
         )
@@ -599,7 +606,7 @@ class WhitePointGUI(Node):
 class MainWindow(QMainWindow):
     """主視窗"""
     def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.1:11000", 
-                 model_path="PME033541/vla4"):
+                 model_path="PME033541/vla9"):
         super().__init__()
         self.ros_node = ros_node
         self.signal_bridge = signal_bridge
@@ -613,6 +620,12 @@ class MainWindow(QMainWindow):
         self.current_image = None
         self.llm_points = []  # 儲存 LLM 解析出的點
         self.conversation_state = None  # 對話狀態（用於管理影像和提示）
+        
+        # LLM 自動重試狀態
+        self.last_llm_text = None          # 最後一次使用者輸入的原始文字（不含格式指示）
+        self.llm_auto_retry_count = 0      # 目前點已自動嘗試次數
+        self.llm_auto_max_retries = 3      # 每個點最多自動嘗試次數（含第一次）
+        self.llm_waiting_second_point = False  # 按下 Yes 後等待進入 waiting_second_point
         
         # 初始化 conversation state
         if default_conversation is not None:
@@ -778,10 +791,11 @@ class MainWindow(QMainWindow):
 
     def add_model_output(self, text: str):
         """添加模型輸出到文字區域"""
-        self.output_text.append(f"<b style='color: #2196F3;'>Model:</b> {text}")
-        self.output_text.verticalScrollBar().setValue(
-            self.output_text.verticalScrollBar().maximum()
-        )
+        # 暫時不在 GUI Output 顯示 LLM/Model 的原始文字輸出
+        # self.output_text.append(f"<b style='color: #2196F3;'>Model:</b> {text}")
+        # self.output_text.verticalScrollBar().setValue(
+        #     self.output_text.verticalScrollBar().maximum()
+        # )
 
     def update_3d_coord(self, x: float, y: float, z: float):
         """更新 3D 座標顯示（不顯示在 UI）"""
@@ -797,7 +811,7 @@ class MainWindow(QMainWindow):
             "select_first_point": "請選第一個點（點選後會詢問確認）",
             "moving_to_approach": "前往準備點中（暫不接受點選）",
             "waiting_second_point": "已到準備點，請選第二個點（點選後會詢問確認，並再次調整高度）",
-            "moving_to_target": "前往目標點中（暫不接受點選）",
+            "moving_to_target": "前往目標點中（可重新點選覆蓋目標）",
         }
         return mapping.get(phase, f"未知階段：{phase}")
 
@@ -806,6 +820,11 @@ class MainWindow(QMainWindow):
         if not phase:
             return
         self.selection_phase = phase
+        # 當進入 waiting_second_point 且是由 LLM 選點觸發時，自動重送相同輸入
+        if phase == "waiting_second_point" and self.llm_waiting_second_point:
+            self.llm_waiting_second_point = False
+            self.llm_auto_retry_count = 1  # 第二點從第 1 次重新計算
+            QTimer.singleShot(800, self._resend_to_llm)
     
     def append_point_preview(self, pixel_points):
         """在右側輸出區插入帶叉叉標註的影像"""
@@ -837,37 +856,75 @@ class MainWindow(QMainWindow):
             cursor.insertText("\n")
             cursor.insertImage(pixmap.toImage())
             self.output_text.setTextCursor(cursor)
+            self.output_text.verticalScrollBar().setValue(
+                self.output_text.verticalScrollBar().maximum()
+            )
         except Exception as e:
             print(f"Failed to create point preview: {e}", file=sys.stderr)
+
+    def append_manual_selection_output(self, x: int, y: int):
+        """將手動選點的文字與影像顯示在 Output 區域"""
+        h, w = self.current_image.shape[:2]
+        nx = x / w
+        ny = y / h
+        self.output_text.append(f"<b style='color: #2196F3;'>LLM:</b> ({nx:.4f}, {ny:.4f})")
+        self.append_point_preview([(int(x), int(y))])
+        self.output_text.verticalScrollBar().setValue(
+            self.output_text.verticalScrollBar().maximum()
+        )
     
     def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual"):
         """依照階段要求，先詢問確認再發布像素點"""
-        allowed_phases = {"select_first_point", "waiting_second_point"}
+        if self.current_image is None:
+            self.output_text.append(
+                "<b style='color: #F44336;'>錯誤:</b> 尚未收到相機影像，無法選點。"
+            )
+            return
+
+        allowed_phases = {"select_first_point", "waiting_second_point", "moving_to_target"}
         if self.selection_phase not in allowed_phases:
             self.output_text.append(
                 f"<b style='color: #FF9800;'>提示:</b> 目前階段為「{self.phase_to_text(self.selection_phase)}」，暫不接受新點。"
             )
             return
 
-        if source == "manual":
-            self.append_point_preview([(int(x), int(y))])
-
         is_second = (self.selection_phase == "waiting_second_point")
-        ordinal = "第二次" if is_second else "第一次"
+        is_retarget = (self.selection_phase == "moving_to_target")
+        if is_retarget:
+            ordinal = "重新指定"
+        else:
+            ordinal = "第二次" if is_second else "第一次"
+        
+        # 計算標準化座標（0~1）用於顯示
+        h_img, w_img = self.current_image.shape[:2]
+        nx = x / w_img
+        ny = y / h_img
         source_text = "模型建議點"
+
+        # 手動點選時：在按 Yes/No 前先顯示到 Output
+        if source == "manual":
+            self.append_manual_selection_output(x, y)
 
         reply = QMessageBox.question(
             self,
             "模型建議點",
-            f"{source_text}\n座標: ({x}, {y})\n\n要選擇這個{ordinal}點嗎？",
+            f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
 
         if reply != QMessageBox.Yes:
+            # 若是 LLM 推薦的點被拒絕，且還有剩餘重試次數，自動重新推論
+            if source == "llm" and self.last_llm_text is not None:
+                if self.llm_auto_retry_count < self.llm_auto_max_retries:
+                    self.llm_auto_retry_count += 1
+                    QTimer.singleShot(300, self._resend_to_llm)
             return
 
+        # 按下 Yes：發布像素，並若為 LLM 選點則設旗標等待第二點
         self.ros_node.publish_pixel(x, y)
+        if source == "llm" and self.selection_phase == "select_first_point":
+            self.llm_waiting_second_point = True
 
     def send_user_input(self):
         """發送使用者輸入並查詢 LLM"""
@@ -902,9 +959,14 @@ class MainWindow(QMainWindow):
             self.output_text.append("<b style='color: #F44336;'>錯誤:</b> 沒有可用的影像")
             return
         
+        # 儲存原始輸入供自動重試使用，並重設計數器
+        self.last_llm_text = text
+        self.llm_auto_retry_count = 1
+        self.llm_waiting_second_point = False
+        
         # 添加隱藏的格式指示（不顯示給使用者）
         prompt_with_instruction = text + (
-            " Your answer should be formatted as a list of tuples, "
+            "\nYour answer should be formatted as a list of tuples, "
             "i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the "
             "x and y coordinates of a point satisfying the conditions above. "
             "The coordinates should be between 0 and 1, indicating the "
@@ -914,6 +976,33 @@ class MainWindow(QMainWindow):
         # 送給 LLM 處理
         self.send_to_llm(prompt_with_instruction, image)
     
+    def _resend_to_llm(self):
+        """使用當前影像重新發送最後一次的 LLM 輸入（自動重試或第二點觸發）"""
+        if not self.last_llm_text or self.current_image is None:
+            self.output_text.append(
+                "<b style='color: #F44336;'>錯誤:</b> 無法自動重試，缺少輸入文字或影像。"
+            )
+            return
+        try:
+            rgb = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            image = PILImage.fromarray(rgb)
+        except Exception as e:
+            self.output_text.append(f"<b style='color: #F44336;'>錯誤:</b> 無法取得影像: {e}")
+            return
+        # 顯示與初次輸入相同的使用者文字
+        self.output_text.append(f"<b style='color: #4CAF50;'>You:</b> {self.last_llm_text}")
+        self.output_text.verticalScrollBar().setValue(
+            self.output_text.verticalScrollBar().maximum()
+        )
+        prompt_with_instruction = self.last_llm_text + (
+            "\nYour answer should be formatted as a list of tuples, "
+            "i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the "
+            "x and y coordinates of a point satisfying the conditions above. "
+            "The coordinates should be between 0 and 1, indicating the "
+            "normalized pixel locations of the points in the image."
+        )
+        self.send_to_llm(prompt_with_instruction, image)
+
     def send_to_llm(self, text: str, image: PILImage.Image):
         """將文字和影像送到 LLM（使用 conversation_state 系統）"""
         try:
@@ -936,7 +1025,7 @@ class MainWindow(QMainWindow):
             self.llm_worker.worker_processing.connect(self.on_worker_processing)
             
             # 更新狀態
-            self.service_status.setText("Controller: Connecting... | Worker: Waiting...")
+            # self.service_status.setText("Controller: Connecting... | Worker: Waiting...")
             
             # 建立 conversation state（像 vlservoing.py 一樣）
             self.conversation_state = default_conversation.copy()
@@ -953,7 +1042,7 @@ class MainWindow(QMainWindow):
             self.conversation_state.append_message(self.conversation_state.roles[1], None)
             
             # 決定對話模板（基於模型名稱）
-            model_name = "vla4"  # 使用註冊在 Controller 的模型名稱
+            model_name = "vla9"  # 使用註冊在 Controller 的模型名稱
             template_name = 'vicuna_v1'  # Vicuna 模型使用 vicuna_v1 模板
             
             # 如果是新對話，使用適當的模板
@@ -971,16 +1060,15 @@ class MainWindow(QMainWindow):
             request_data = {
                 'model': model_name,
                 'prompt': prompt,
-                'temperature': 1.0,
-                'top_p': 0.7,
-                'max_new_tokens': 512,
+                'temperature': 0,    # greedy decoding，與 infer_and_mark.py 一致，座標輸出更穩定
+                'top_p': 1.0,
+                'max_new_tokens': 256,
                 'stop': self.conversation_state.sep if self.conversation_state.sep_style in [SeparatorStyle.SINGLE, SeparatorStyle.MPT] else self.conversation_state.sep2,
                 'images': images,
             }
             
             self.llm_worker.set_request_data(request_data)
             self.llm_worker.start()
-            
             self.send_button.setEnabled(False)
             self.send_button.setText("Processing...")
             
@@ -988,13 +1076,13 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             self.output_text.append(f"<b style='color: #F44336;'>Error:</b> {str(e)}")
-            self.service_status.setText("Controller: Error | Worker: Error")
+            # self.service_status.setText("Controller: Error | Worker: Error")
     
     def handle_llm_response(self, response: str):
         """處理 LLM 回應（只顯示一次完整回應並附上視覺化圖片）"""
         # 顯示文字回應（移除多餘換行）
         clean_response = response.replace('\n', ' ').strip()
-        self.output_text.append(f"<b style='color: #2196F3;'>LLM:</b> {clean_response}")
+        # self.output_text.append(f"<b style='color: #2196F3;'>LLM:</b> {clean_response}")
         
         # 解析座標
         vectors = find_vectors(response)
@@ -1005,16 +1093,25 @@ class MainWindow(QMainWindow):
             h, w = self.current_image.shape[:2]
             self.llm_points = []
             pixel_points = []
+            norm_points = []   # 正規化 0~1 座標
             
             for x, y in vectors_2d:
                 if isinstance(x, float) and x <= 1:
+                    nx, ny = x, y
                     px = int(x * w)
                     py = int(y * h)
                 else:
                     px, py = int(x), int(y)
+                    nx, ny = px / w, py / h
                 self.llm_points.append((px, py))
                 pixel_points.append((px, py))
+                norm_points.append((nx, ny))
             
+            # LLM 圖片輸出（顯示正規化 0~1 座標）
+            point_info = ", ".join([f"({nx:.4f}, {ny:.4f})" for nx, ny in norm_points])
+            self.output_text.append(
+                f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
+            )
             self.append_point_preview(pixel_points)
             
             # 如果只有一個點，自動發布
@@ -1024,28 +1121,30 @@ class MainWindow(QMainWindow):
     
     def on_controller_connected(self, worker_addr: str):
         """Controller 連接成功"""
-        self.service_status.setText(f"Controller: ✓ Connected | Worker: {worker_addr}")
+        # self.service_status.setText(f"Controller: ✓ Connected | Worker: {worker_addr}")
+        pass
     
     def on_worker_processing(self):
         """Worker 開始處理"""
-        current = self.service_status.text()
-        if "Worker:" in current:
-            parts = current.split("|")
-            self.service_status.setText(f"{parts[0]}| Worker: Processing...")
+        # current = self.service_status.text()
+        # if "Worker:" in current:
+        #     parts = current.split("|")
+        #     self.service_status.setText(f"{parts[0]}| Worker: Processing...")
+        pass
     
     def handle_llm_error(self, error: str):
         """處理 LLM 錯誤"""
         self.output_text.append(f"<b style='color: #F44336;'>LLM Error:</b> {error}")
-        self.service_status.setText("Controller: ✗ Error | Worker: ✗ Error")
+        # self.service_status.setText("Controller: ✗ Error | Worker: ✗ Error")
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")
     
     def llm_request_finished(self):
         """LLM 請求完成"""
-        current = self.service_status.text()
-        if "Controller:" in current:
-            parts = current.split("|")
-            self.service_status.setText(f"{parts[0]}| Worker: ✓ Done")
+        # current = self.service_status.text()
+        # if "Controller:" in current:
+        #     parts = current.split("|")
+        #     self.service_status.setText(f"{parts[0]}| Worker: ✓ Done")
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")
     
@@ -1138,7 +1237,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
     parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
                        help="LLM controller URL")
-    parser.add_argument("--model-path", type=str, default="PME033541/vla4",
+    parser.add_argument("--model-path", type=str, default="PME033541/vla9",
                        help="Model path to load in the GUI")
     parser.add_argument("--ros-args", nargs=argparse.REMAINDER, help="ROS arguments")
     
@@ -1156,7 +1255,10 @@ def main(args=None):
     parsed_args = parser.parse_args(custom_args)
     
     # 初始化 ROS2
-    rclpy.init(args=ros_args_list if ros_args_list else None)
+    # 注意：必須用 rclpy.init()（讓 rclpy 自己從 sys.argv 讀取 --ros-args）
+    # 不能傳 ros_args_list，因為那個 list 缺少 '--ros-args' 開頭，
+    # rcl 無法識別後面的 --params-file，會導致 ROS parameter 全部讀到預設值。
+    rclpy.init()
     
     # 創建 Qt 應用（必須在主執行緒）
     app = QApplication([sys.argv[0]])

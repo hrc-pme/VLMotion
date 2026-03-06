@@ -15,27 +15,39 @@ from rclpy.time import Time as RclpyTime
 from sklearn.cluster import DBSCAN
 
 # ----------------------------------------------------------
-#   9 點補插深度（在「未旋轉」的 depth image 上）
+#   擴展搜尋深度補插（在「未旋轉」的 depth image 上）
+#
+#   策略：以目標像素為中心，由內而外逐環擴大搜尋（最多 max_r 像素）。
+#   找到第一個含有效深度的環時，取該環所有有效值的中位數回傳。
+#   這解決了目標位於深度空洞（反射面、遮擋邊緣等）時無法取得深度的問題。
 # ----------------------------------------------------------
-def get_valid_depth(depth_img, cx, cy):
+def get_valid_depth(depth_img, cx, cy, max_r=20):
     h, w = depth_img.shape[:2]
     cx_i = int(np.clip(round(cx), 0, w - 1))
     cy_i = int(np.clip(round(cy), 0, h - 1))
 
+    # 先試中心點
     z = float(depth_img[cy_i, cx_i])
     if z > 0:
         return z
 
-    zs = []
-    for dx in [-1, 0, 1]:
-        for dy in [-1, 0, 1]:
-            nx = int(np.clip(cx_i + dx, 0, w - 1))
-            ny = int(np.clip(cy_i + dy, 0, h - 1))
-            v = float(depth_img[ny, nx])
-            if v > 0:
-                zs.append(v)
+    # 由內而外逐環擴展搜尋
+    for r in range(1, max_r + 1):
+        zs = []
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                # 只取當前環的邊界像素，跳過已搜尋過的內圈
+                if abs(dx) < r and abs(dy) < r:
+                    continue
+                nx = int(np.clip(cx_i + dx, 0, w - 1))
+                ny = int(np.clip(cy_i + dy, 0, h - 1))
+                v = float(depth_img[ny, nx])
+                if v > 0:
+                    zs.append(v)
+        if zs:
+            return float(np.median(zs))
 
-    return float(np.mean(zs)) if zs else 0.0
+    return 0.0
 
 
 class WhitePointTo3D(Node):
@@ -43,16 +55,29 @@ class WhitePointTo3D(Node):
         super().__init__('white_point_to_3d')
         self.bridge = CvBridge()
 
+        # 可配置相機 topic 和 frame（由 launch 檔根據 CAMERA 變數自動設定）
+        self.declare_parameter('depth_topic', '')
+        self.declare_parameter('camera_info_topic', '')
+        self.declare_parameter('camera_frame', '')
+
+        depth_topic = self.get_parameter('depth_topic').get_parameter_value().string_value
+        camera_info_topic = self.get_parameter('camera_info_topic').get_parameter_value().string_value
+        self.camera_frame = self.get_parameter('camera_frame').get_parameter_value().string_value
+
+        self.get_logger().info(f'Camera depth topic: {depth_topic}')
+        self.get_logger().info(f'Camera info topic: {camera_info_topic}')
+        self.get_logger().info(f'Camera frame: {self.camera_frame}')
+
         # 對齊到 color 的深度 + color 內參
         self.depth_sub = self.create_subscription(
             Image,
-            '/d435i/aligned_depth_to_color/image_raw',
+            depth_topic,
             self.depth_callback,
             10
         )
         self.info_sub = self.create_subscription(
             CameraInfo,
-            '/d435i/color/camera_info',
+            camera_info_topic,
             self.info_callback,
             10
         )
@@ -128,8 +153,7 @@ class WhitePointTo3D(Node):
     # ------------------------------------------------------
     def info_callback(self, msg: CameraInfo):
         self.cam_K = np.array(msg.k).reshape(3, 3)
-        # msg.header.frame_id 是 d435i_color_optical_frame
-        # 我們使用 d435i 的 frame 以確保跟著相機旋轉
+        # 使用 launch 設定的 camera_frame 以確保跟著相機旋轉
 
     # ------------------------------------------------------
     # Depth image callback：未旋轉的 aligned depth
@@ -520,10 +544,10 @@ class WhitePointTo3D(Node):
             f'OPTICAL frame: Xo={Xo:.3f}, Yo={Yo:.3f}, Zo={Zo:.3f}'
         )
 
-        # 使用 d435i 的 color optical frame (會跟著相機旋轉)
+        # 使用 launch 設定的 color optical frame（會跟著相機旋轉）
         pt_cam = PointStamped()
         pt_cam.header.stamp = self.get_clock().now().to_msg()
-        pt_cam.header.frame_id = 'd435i_color_optical_frame'
+        pt_cam.header.frame_id = self.camera_frame
         pt_cam.point.x = Xo
         pt_cam.point.y = Yo
         pt_cam.point.z = Zo
@@ -533,7 +557,7 @@ class WhitePointTo3D(Node):
             # TF 系統會自動處理所有中間的轉換
             tf = self.tf_buffer.lookup_transform(
                 'base_link',
-                'd435i_color_optical_frame',
+                self.camera_frame,
                 RclpyTime()
             )
             pt_base = do_transform_point(pt_cam, tf)
@@ -573,7 +597,7 @@ class WhitePointTo3D(Node):
                     p_opt = self.backproject_optical(uu, vv, dm)
 
                     tmp = PointStamped()
-                    tmp.header.frame_id = 'd435i_color_optical_frame'
+                    tmp.header.frame_id = self.camera_frame
                     tmp.point.x = float(p_opt[0])
                     tmp.point.y = float(p_opt[1])
                     tmp.point.z = float(p_opt[2])

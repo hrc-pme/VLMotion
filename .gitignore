@@ -68,3 +68,8 @@ Thumbs.db
 wit_token.txt
 
 ros2_ws/frames_*
+
+ros2_ws/src/camera_tf_calibration/
+ros2_ws/src/point_detection/
+ros2_ws/src/vlpoint/
+ros2_ws/src/vlservo/

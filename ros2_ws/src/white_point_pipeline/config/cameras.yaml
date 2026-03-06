@@ -1,0 +1,34 @@
+# ============================================================
+# 相機配置檔
+# 用法：ros2 launch white_point_pipeline white_point_pipeline.launch.py camera:=d415
+# ============================================================
+
+d435i:
+  serial_no: '239122070936'
+  # ROS2 topic 前綴（realsense node name）
+  topic_prefix: '/d435i'
+  # TF frame 名稱
+  color_optical_frame: 'd435i_color_optical_frame'
+  link_name: 'd435i_link'
+  link_adjusted_name: 'd435i_link_adjusted'
+  tf_publisher_name: 'd435i_tf_adjuster'
+  link_connector_name: 'd435i_link_connector'
+
+d415:
+  serial_no: '327322062928'
+  topic_prefix: '/d415'
+  color_optical_frame: 'd415_color_optical_frame'
+  link_name: 'd415_link'
+  link_adjusted_name: 'd415_link_adjusted'
+  tf_publisher_name: 'd415_tf_adjuster'
+  link_connector_name: 'd415_link_connector'
+
+# 日後新增相機只要加一段即可，例如：
+# d405:
+#   serial_no: '218622277570'
+#   topic_prefix: '/d405'
+#   color_optical_frame: 'd405_color_optical_frame'
+#   link_name: 'd405_link'
+#   link_adjusted_name: 'd405_link_adjusted'
+#   tf_publisher_name: 'd405_tf_adjuster'
+#   link_connector_name: 'd405_link_connector'
