@@ -30,6 +30,8 @@ services:
       - ../ros2_ws/src/vlpoint:/workspace/ros2_ws/src/vlpoint:rw
       - ../ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlservo:rw
       - ../ros2_ws:/workspace/ros2_ws
+      - ../Script:/workspace/Script
+      - ../Outputs:/workspace/Outputs
       # Mount environment script so changes reflect without rebuilding image
       - ../environment.sh:/workspace/environment.sh:ro
       # Mount wit token file

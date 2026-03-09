@@ -73,3 +73,15 @@ ros2_ws/src/camera_tf_calibration/
 ros2_ws/src/point_detection/
 ros2_ws/src/vlpoint/
 ros2_ws/src/vlservo/
+
+# rosbag / dataset (大檔案)
+*.db3
+*.mcap
+*.bag
+*.h5
+*.hdf5
+*.zip
+*.tar
+*.tar.gz
+*.mp4
+metadata.yaml

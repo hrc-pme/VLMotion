@@ -1,0 +1,27 @@
+# Whether to record all topics (if true, the 'topics' list is ignored)
+allow_all: false
+
+# Topics to record (effective only when allow_all=false)
+topics:
+  - /tf_static
+  - /camera/camera/color/image_raw/compressed
+
+# Topics to exclude (effective only when allow_all=true; regex patterns are joined with |)
+exclude_topics:
+  - ^/rosout.*$
+
+# Output directory 
+output_dir: /workspace/Outputs/rosbags/test
+
+# rosbag2 storage and compression
+storage: sqlite3           # sqlite3 or mcap (requires mcap plugin if using mcap)
+compression: none          # none or zstd
+compression_mode: file     # file or message (only effective when compression != none)
+
+# File splitting/time limits (0 means no limit)
+max_bag_size: 0            # Unit: Bytes (e.g., 1073741824 = 1 GiB)
+max_bag_duration: 0        # Unit: Seconds (e.g., 600 = one bag every 10 minutes)
+
+# QoS override (can be left as an empty string). Example: ~/qos_overrides.yaml
+# The content format is the same as the --qos-profile-overrides-path option in ros2 bag record
+qos_profile_overrides_path: ""
