@@ -85,3 +85,8 @@ ros2_ws/src/vlservo/
 *.tar.gz
 *.mp4
 metadata.yaml
+
+*.jpg
+*.jpeg
+*.png
+*.bmp

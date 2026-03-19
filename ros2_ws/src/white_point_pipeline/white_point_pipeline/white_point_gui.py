@@ -79,12 +79,17 @@ def clean_qt_environment():
 
 clean_qt_environment()
 
+import math
+import struct
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String
 from geometry_msgs.msg import Point, PointStamped
 from cv_bridge import CvBridge
+import tf2_ros
+from tf2_geometry_msgs import do_transform_point
+from rclpy.time import Time as RclpyTime
 import subprocess
 import sys
 
@@ -329,7 +334,7 @@ class ServerProcess:
 
     def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
                            port=22000, worker_url="http://10.0.0.1:22000",
-                           model_path="PME033541/vla9", load_4bit=True):
+                           model_path="PME033541/vla10", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
@@ -543,6 +548,28 @@ class WhitePointGUI(Node):
         # 發布使用者輸入
         self.user_input_pub = self.create_publisher(String, '/user_input', 10)
 
+        # ── 深度影像 + 相機內參（用於多點選擇時的 3D 投影）──
+        self.declare_parameter('depth_topic', '')
+        self.declare_parameter('camera_info_topic', '')
+        self.declare_parameter('camera_frame', '')
+        depth_topic = self.get_parameter('depth_topic').get_parameter_value().string_value
+        camera_info_topic = self.get_parameter('camera_info_topic').get_parameter_value().string_value
+        self.camera_frame = self.get_parameter('camera_frame').get_parameter_value().string_value
+
+        if depth_topic:
+            self.depth_sub_node = self.create_subscription(
+                Image, depth_topic, self._depth_callback_node, 10)
+        if camera_info_topic:
+            self.cam_info_sub_node = self.create_subscription(
+                CameraInfo, camera_info_topic, self._camera_info_callback_node, 10)
+
+        self.depth_image = None   # 最新未旋轉深度圖
+        self.cam_K = None         # 3x3 內參矩陣
+
+        # TF buffer（保持最新 TF，用於 base_link 投影）
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         self.last_click = None  # (u, v)
         self.last_3d = None     # (x, y, z)
 
@@ -595,6 +622,41 @@ class WhitePointGUI(Node):
         self.pixel_pub.publish(pt)
         self.get_logger().info(f'Clicked pixel: u={x}, v={y}')
 
+    # ── 深度 / 相機內參 callback（給多點選擇使用）──
+    def _depth_callback_node(self, msg: Image):
+        try:
+            self.depth_image = self.bridge.imgmsg_to_cv2(msg)
+        except Exception:
+            pass
+
+    def _camera_info_callback_node(self, msg: CameraInfo):
+        self.cam_K = np.array(msg.k).reshape(3, 3)
+
+    def get_valid_depth_at(self, cx, cy, max_r=20):
+        """以環形擴展方式搜尋有效深度（未旋轉影像座標）"""
+        if self.depth_image is None:
+            return 0.0
+        h, w = self.depth_image.shape[:2]
+        cx_i = int(np.clip(round(cx), 0, w - 1))
+        cy_i = int(np.clip(round(cy), 0, h - 1))
+        z = float(self.depth_image[cy_i, cx_i])
+        if z > 0:
+            return z
+        for r in range(1, max_r + 1):
+            zs = []
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    if abs(dx) < r and abs(dy) < r:
+                        continue
+                    nx = int(np.clip(cx_i + dx, 0, w - 1))
+                    ny = int(np.clip(cy_i + dy, 0, h - 1))
+                    v = float(self.depth_image[ny, nx])
+                    if v > 0:
+                        zs.append(v)
+            if zs:
+                return float(np.median(zs))
+        return 0.0
+
     def publish_user_input(self, text: str):
         """發布使用者輸入"""
         msg = String()
@@ -606,7 +668,7 @@ class WhitePointGUI(Node):
 class MainWindow(QMainWindow):
     """主視窗"""
     def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.1:11000", 
-                 model_path="PME033541/vla9"):
+                 model_path="PME033541/vla10"):
         super().__init__()
         self.ros_node = ros_node
         self.signal_bridge = signal_bridge
@@ -637,7 +699,17 @@ class MainWindow(QMainWindow):
         self.voice_available, self.voice_unavailable_reason = voice_support_status()
         self.is_processing_voice = False
         self.selection_phase = "select_first_point"
-        
+
+        # ================================================
+        # 儲存送給模型的影像與推論結果
+        # ================================================
+        self.output_base_dir = "/workspace/Outputs"
+        self.input_images_dir = os.path.join(self.output_base_dir, "model_inputs")
+        self.result_images_dir = os.path.join(self.output_base_dir, "model_results")
+        os.makedirs(self.input_images_dir, exist_ok=True)
+        os.makedirs(self.result_images_dir, exist_ok=True)
+        self._last_saved_image_stem = None  # 記錄輸入影像的檔名主幹，供結果影像使用相同名稱
+
         self.setup_ui()
         self.connect_signals()
         
@@ -804,7 +876,12 @@ class MainWindow(QMainWindow):
 
     def on_image_clicked(self, x: int, y: int):
         """處理影像點擊事件"""
-        self.confirm_and_publish_pixel(x, y, source="manual")
+        if self.llm_points:
+            # 有 LLM 推論點時：替換最近的點並顯示完整預覽
+            self._replace_nearest_llm_point(x, y)
+            self.confirm_and_publish_pixel(x, y, source="llm_adjusted")
+        else:
+            self.confirm_and_publish_pixel(x, y, source="manual")
     
     def phase_to_text(self, phase: str):
         mapping = {
@@ -902,6 +979,7 @@ class MainWindow(QMainWindow):
         source_text = "模型建議點"
 
         # 手動點選時：在按 Yes/No 前先顯示到 Output
+        # llm_adjusted 已在 _replace_nearest_llm_point 中顯示完整點集，不重複顯示
         if source == "manual":
             self.append_manual_selection_output(x, y)
 
@@ -923,7 +1001,7 @@ class MainWindow(QMainWindow):
 
         # 按下 Yes：發布像素，並若為 LLM 選點則設旗標等待第二點
         self.ros_node.publish_pixel(x, y)
-        if source == "llm" and self.selection_phase == "select_first_point":
+        if source in ("llm", "llm_adjusted") and self.selection_phase == "select_first_point":
             self.llm_waiting_second_point = True
 
     def send_user_input(self):
@@ -958,7 +1036,18 @@ class MainWindow(QMainWindow):
         if image is None:
             self.output_text.append("<b style='color: #F44336;'>錯誤:</b> 沒有可用的影像")
             return
-        
+
+        # ---- 儲存送給模型的輸入影像 ----
+        try:
+            input_filename = self._get_next_filename(self.input_images_dir)
+            input_save_path = os.path.join(self.input_images_dir, input_filename)
+            image.save(input_save_path, "JPEG", quality=95)
+            self._last_saved_image_stem = os.path.splitext(input_filename)[0]
+            self.ros_node.get_logger().info(f"Saved input image: {input_save_path}")
+        except Exception as _e:
+            print(f"Failed to save input image: {_e}", file=sys.stderr)
+            self._last_saved_image_stem = None
+
         # 儲存原始輸入供自動重試使用，並重設計數器
         self.last_llm_text = text
         self.llm_auto_retry_count = 1
@@ -994,6 +1083,18 @@ class MainWindow(QMainWindow):
         self.output_text.verticalScrollBar().setValue(
             self.output_text.verticalScrollBar().maximum()
         )
+
+        # ---- 儲存本次推理的輸入影像（每次推理都存新檔，不覆蓋前一張）----
+        try:
+            input_filename = self._get_next_filename(self.input_images_dir)
+            input_save_path = os.path.join(self.input_images_dir, input_filename)
+            image.save(input_save_path, "JPEG", quality=95)
+            self._last_saved_image_stem = os.path.splitext(input_filename)[0]
+            self.ros_node.get_logger().info(f"Saved input image (resend): {input_save_path}")
+        except Exception as _e:
+            print(f"Failed to save input image (resend): {_e}", file=sys.stderr)
+            self._last_saved_image_stem = None
+
         prompt_with_instruction = self.last_llm_text + (
             "\nYour answer should be formatted as a list of tuples, "
             "i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the "
@@ -1042,7 +1143,7 @@ class MainWindow(QMainWindow):
             self.conversation_state.append_message(self.conversation_state.roles[1], None)
             
             # 決定對話模板（基於模型名稱）
-            model_name = "vla9"  # 使用註冊在 Controller 的模型名稱
+            model_name = "vla10"  # 使用註冊在 Controller 的模型名稱
             template_name = 'vicuna_v1'  # Vicuna 模型使用 vicuna_v1 模板
             
             # 如果是新對話，使用適當的模板
@@ -1113,12 +1214,173 @@ class MainWindow(QMainWindow):
                 f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
             )
             self.append_point_preview(pixel_points)
-            
-            # 如果只有一個點，自動發布
+
+            # ---- 儲存推論結果影像（帶叉叉標記） ----
+            try:
+                if self.current_image is not None:
+                    rgb_res = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+                    pil_res = PILImage.fromarray(rgb_res)
+                    annotated_res = visualize_2d(pil_res, pixel_points, [], scale=1.0)
+                    # 決定結果影像檔名：與輸入影像相同主幹以便對應
+                    if self._last_saved_image_stem is not None:
+                        result_filename = self._last_saved_image_stem + ".jpg"
+                    else:
+                        result_filename = self._get_next_filename(self.result_images_dir)
+                    result_save_path = os.path.join(self.result_images_dir, result_filename)
+                    annotated_res.save(result_save_path, "JPEG", quality=95)
+                    self.ros_node.get_logger().info(f"Saved result image: {result_save_path}")
+            except Exception as _e:
+                print(f"Failed to save result image: {_e}", file=sys.stderr)
+
+            # 選出最佳點後發布（單點直接用，多點先做 3D 投影選擇）
             if len(self.llm_points) == 1:
                 px, py = self.llm_points[0]
                 self.confirm_and_publish_pixel(int(px), int(py), source="llm")
-    
+            elif len(self.llm_points) > 1:
+                best_px, best_py = self._select_best_pixel(self.llm_points)
+                self.confirm_and_publish_pixel(int(best_px), int(best_py), source="llm")
+
+    # ------------------------------------------------------------------
+    # 手動選點替換：將最靠近手動點的 LLM 推論點替換，並顯示完整點集預覽
+    # ------------------------------------------------------------------
+    def _replace_nearest_llm_point(self, manual_x: int, manual_y: int):
+        """
+        找出 self.llm_points 中與手動點距離最近的點，
+        將其替換為手動點，然後顯示完整點集（含替換後的點）的預覽。
+        移動仍以 manual_x / manual_y 為準（由後續 publish_pixel 負責）。
+        """
+        if not self.llm_points:
+            return
+
+        # 找最近的 LLM 點
+        min_dist = float('inf')
+        nearest_idx = 0
+        for i, (px, py) in enumerate(self.llm_points):
+            dist = math.sqrt((px - manual_x) ** 2 + (py - manual_y) ** 2)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_idx = i
+
+        # 計算位移，對全部點套用相同偏移
+        orig_x, orig_y = self.llm_points[nearest_idx]
+        dx = manual_x - orig_x
+        dy = manual_y - orig_y
+        self.llm_points = [(px + dx, py + dy) for px, py in self.llm_points]
+
+        # 顯示替換後的完整點集預覽
+        if self.current_image is not None:
+            h, w = self.current_image.shape[:2]
+            norm_points = [(px / w, py / h) for px, py in self.llm_points]
+            point_info = ", ".join([f"({nx:.4f}, {ny:.4f})" for nx, ny in norm_points])
+            self.output_text.append(
+                f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
+            )
+            self.append_point_preview(self.llm_points)
+            self.output_text.verticalScrollBar().setValue(
+                self.output_text.verticalScrollBar().maximum()
+            )
+
+    # ------------------------------------------------------------------
+    # 多點 3D 投影選擇：選出最下方（Z 最小）且最靠近機器人底座的點
+    # 輸入 pixel_points 為旋轉後影像座標（即 LLM 輸出的座標）
+    # ------------------------------------------------------------------
+    def _select_best_pixel(self, pixel_points):
+        """
+        將所有候選像素投影到 base_link，依據：
+          1. Z 最小（物理最低，最靠近地面）
+          2. XY 距離最小（最靠近機器人底座中心）
+        回傳最佳候選的 (px, py)（旋轉後影像座標）
+        """
+        node = self.ros_node
+        if node.depth_image is None or node.cam_K is None or not node.camera_frame:
+            self.ros_node.get_logger().warn(
+                'select_best_pixel: no depth/cam_K/camera_frame, fall back to first point'
+            )
+            return pixel_points[0]
+
+        H_d = node.depth_image.shape[0]   # 未旋轉深度圖高
+        W_d = node.depth_image.shape[1]   # 未旋轉深度圖寬
+        fx = node.cam_K[0, 0]
+        fy = node.cam_K[1, 1]
+        cx_k = node.cam_K[0, 2]
+        cy_k = node.cam_K[1, 2]
+
+        candidates = []
+        for (px, py) in pixel_points:
+            # LLM 座標是旋轉 90° 順時針後的影像座標
+            # 逆旋轉：u = py, v = H_d - 1 - px（與 white_point_to_3d.py 相同）
+            u = int(py)
+            v = int(H_d - 1 - px)
+            if u < 0 or u >= W_d or v < 0 or v >= H_d:
+                self.ros_node.get_logger().warn(
+                    f'select_best_pixel: pixel ({px},{py}) -> depth ({u},{v}) out of range'
+                )
+                continue
+
+            depth_raw = node.get_valid_depth_at(u, v)
+            if depth_raw <= 0.0:
+                continue
+
+            if node.depth_image.dtype == np.uint16:
+                depth_m = float(depth_raw) / 1000.0
+            else:
+                depth_m = float(depth_raw)
+
+            if depth_m < 0.1 or depth_m > 6.0:
+                continue
+
+            # 光學座標系反投影
+            Xo = (u - cx_k) * depth_m / fx
+            Yo = (v - cy_k) * depth_m / fy
+            Zo = depth_m
+
+            # 轉到 base_link
+            try:
+                pt = PointStamped()
+                pt.header.frame_id = node.camera_frame
+                pt.header.stamp = node.get_clock().now().to_msg()
+                pt.point.x = Xo
+                pt.point.y = Yo
+                pt.point.z = Zo
+
+                tf = node.tf_buffer.lookup_transform(
+                    'base_link', node.camera_frame, RclpyTime()
+                )
+                pt_base = do_transform_point(pt, tf)
+
+                x_b = pt_base.point.x
+                y_b = pt_base.point.y
+                z_b = pt_base.point.z
+                xy_dist = math.sqrt(x_b ** 2 + y_b ** 2)
+
+                candidates.append((px, py, z_b, xy_dist))
+                self.ros_node.get_logger().info(
+                    f'  candidate ({px:.0f},{py:.0f}) -> base_link '
+                    f'X={x_b:.3f} Y={y_b:.3f} Z={z_b:.3f} XYdist={xy_dist:.3f}'
+                )
+            except Exception as e:
+                # TF 尚未準備好，以光學深度作備案（距離越近表示越靠近）
+                self.ros_node.get_logger().warn(
+                    f'select_best_pixel: TF failed for ({px},{py}): {e}, using depth fallback'
+                )
+                candidates.append((px, py, float('inf'), depth_m))
+
+        if not candidates:
+            self.ros_node.get_logger().warn(
+                'select_best_pixel: no valid candidates, fall back to first point'
+            )
+            return pixel_points[0]
+
+        # 排序：先按 Z 升序（最低），再按 XY 距離升序（最近）
+        candidates.sort(key=lambda c: (c[2], c[3]))
+        best = candidates[0]
+        self.ros_node.get_logger().info(
+            f'select_best_pixel: best=({best[0]:.0f},{best[1]:.0f}) '
+            f'Z={best[2]:.3f} XYdist={best[3]:.3f} '
+            f'from {len(candidates)} valid candidates'
+        )
+        return (best[0], best[1])
+
     def on_controller_connected(self, worker_addr: str):
         """Controller 連接成功"""
         # self.service_status.setText(f"Controller: ✓ Connected | Worker: {worker_addr}")
@@ -1200,6 +1462,30 @@ class MainWindow(QMainWindow):
             self.voice_button.setText("Voice Input")
             self.voice_button.setToolTip("Click to start voice input (about 4 sec)")
 
+    def _get_next_filename(self, directory: str) -> str:
+        """
+        在指定目錄中，以「YYYYMMDD_XXXX.jpg」格式產生下一個有序檔名。
+        序號按照今日已存在的檔案數量累加，確保不會覆蓋同一天的舊檔。
+        """
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        prefix = today + "_"
+        try:
+            existing = [
+                f for f in os.listdir(directory)
+                if f.startswith(prefix) and f.lower().endswith(".jpg")
+            ]
+        except OSError:
+            existing = []
+        numbers = []
+        for f in existing:
+            stem = f[len(prefix) : len(prefix) + 4]
+            try:
+                numbers.append(int(stem))
+            except ValueError:
+                pass
+        next_num = (max(numbers) + 1) if numbers else 1
+        return f"{today}_{next_num:04d}.jpg"
+
     def check_service_status(self):
         """檢查遠端 LLM 服務狀態"""
         try:
@@ -1237,7 +1523,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
     parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
                        help="LLM controller URL")
-    parser.add_argument("--model-path", type=str, default="PME033541/vla9",
+    parser.add_argument("--model-path", type=str, default="PME033541/vla10",
                        help="Model path to load in the GUI")
     parser.add_argument("--ros-args", nargs=argparse.REMAINDER, help="ROS arguments")
     

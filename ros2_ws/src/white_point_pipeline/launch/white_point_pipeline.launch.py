@@ -181,6 +181,9 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'color_topic': color_topic,
+            'depth_topic': depth_topic,
+            'camera_info_topic': camera_info_topic,
+            'camera_frame': optical_frame,
         }],
         arguments=[
             '--controller-url', controller_url,
@@ -236,7 +239,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'model_path',
-            default_value='PME033541/vla9',
+            default_value='PME033541/vla10',
             description='Model to load in the VLPoint GUI',
         ),
 
