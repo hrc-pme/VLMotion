@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Point, PointStamped, Twist
-from std_msgs.msg import Float32, ColorRGBA, String
+from std_msgs.msg import Float32, ColorRGBA, String, Int32
 from sensor_msgs.msg import Image, CameraInfo, JointState
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -11,7 +11,9 @@ from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from cv_bridge import CvBridge
 import math
+import re
 import numpy as np
+from speech_recognition_msgs.msg import SpeechRecognitionCandidates
 
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
@@ -35,6 +37,30 @@ class WhitePointFullMotion(Node):
             Float32,
             '/panel_axis_base',
             self.axis_callback,
+            10
+        )
+
+        # 訂閱 GUI 文字輸入（關鍵字可直接控制底盤）
+        self.user_input_sub = self.create_subscription(
+            String,
+            '/user_input',
+            self.user_input_callback,
+            10
+        )
+
+        # 訂閱語音轉文字（可選，與 /user_input 共用同一套關鍵字控制）
+        self.speech_text_sub = self.create_subscription(
+            SpeechRecognitionCandidates,
+            '/speech_to_text',
+            self.speech_to_text_callback,
+            10
+        )
+
+        # 訂閱聲音方向（stretch 指令會用到）
+        self.sound_direction_sub = self.create_subscription(
+            Int32,
+            '/sound_direction',
+            self.sound_direction_callback,
             10
         )
         
@@ -74,6 +100,21 @@ class WhitePointFullMotion(Node):
         self.max_ang = 0.5
         self.angle_thresh = 5.0 * math.pi / 180.0
         self.dist_thresh = 0.03
+
+        # 手動文字/語音控制參數（共用 /user_input 與 /speech_to_text）
+        self.rad_per_deg = math.pi / 180.0
+        self.sound_direction_rad = 0.0
+        self.manual_step_size = 'medium'
+        self.manual_step_cfg = {
+            'small': {'translate': 0.03, 'rad': 6.0 * self.rad_per_deg},
+            'medium': {'translate': 0.06, 'rad': 12.0 * self.rad_per_deg},
+            'big': {'translate': 0.12, 'rad': 24.0 * self.rad_per_deg},
+        }
+        self.manual_lin_speed = 0.12
+        self.manual_ang_speed = 0.45
+        self.manual_cmd_until_ns = 0
+        self.manual_twist = Twist()
+        self.manual_motion_queue = []
 
         # Lift/Arm range
         self.lift_min = 0.0
@@ -1354,6 +1395,245 @@ class WhitePointFullMotion(Node):
         msg.data = self.selection_phase
         self.selection_phase_pub.publish(msg)
 
+    def sound_direction_callback(self, msg: Int32):
+        """ReSpeaker DoA（度）→ 弧度；方向與原 voice teleop 一致。"""
+        self.sound_direction_rad = float(msg.data) * -self.rad_per_deg
+
+    def speech_to_text_callback(self, msg: SpeechRecognitionCandidates):
+        """處理 /speech_to_text，重用與 /user_input 相同的關鍵字路徑。"""
+        if not msg.transcript:
+            return
+        text = ' '.join(map(str, msg.transcript)).strip()
+        if not text:
+            return
+        self._handle_keyword_command(text, source='speech_to_text')
+
+    def user_input_callback(self, msg: String):
+        """處理 GUI 文字輸入中的關鍵字命令。"""
+        text = (msg.data or '').strip()
+        if not text:
+            return
+        self._handle_keyword_command(text, source='user_input')
+
+    def _normalize_text(self, text: str):
+        t = (text or '').strip().lower()
+        t = re.sub(r"[\.,!?，。！？;；]", " ", t)
+        t = ' '.join(t.split())
+        return t
+
+    def _extract_distance_m(self, clause: str):
+        m = re.search(
+            r"(\d+(?:\.\d+)?)\s*(km|kilometer(?:s)?|kilometre(?:s)?|m|meter(?:s)?|metre(?:s)?|cm|centimeter(?:s)?|centimetre(?:s)?|公尺|米|公分)",
+            clause
+        )
+        if m:
+            value = float(m.group(1))
+            unit = m.group(2)
+            if unit.startswith('km') or unit.startswith('kilo'):
+                return value * 1000.0
+            if unit.startswith('cm') or unit.startswith('centi') or unit == '公分':
+                return value / 100.0
+            return value
+
+        m = re.search(r"\bfor\s+(\d+(?:\.\d+)?)\b", clause)
+        if m:
+            return float(m.group(1))
+        return None
+
+    def _extract_angle_rad(self, clause: str):
+        m = re.search(
+            r"(\d+(?:\.\d+)?)\s*(deg|degree(?:s)?|degrees|°|度|rad|radian(?:s)?)",
+            clause
+        )
+        if m:
+            value = float(m.group(1))
+            unit = m.group(2)
+            if unit in ('rad',) or unit.startswith('radian'):
+                return value
+            return value * self.rad_per_deg
+
+        # turn left 90 / right 45 這類無單位，預設度
+        m = re.search(r"\b(?:turn\s+)?(?:left|right)\s+(\d+(?:\.\d+)?)\b", clause)
+        if m:
+            return float(m.group(1)) * self.rad_per_deg
+        return None
+
+    def _parse_motion_commands(self, text: str):
+        t = self._normalize_text(text)
+        if not t:
+            return []
+
+        clauses = [
+            c.strip()
+            for c in re.split(r"\s*(?:,| and then | then | and |接著|然後|再來)\s*", t)
+            if c.strip()
+        ]
+
+        commands = []
+        for clause in clauses:
+            if any(k in clause for k in ('small', '小步', '小')):
+                commands.append(('step', 'small'))
+                continue
+            if any(k in clause for k in ('medium', '中步', '中')):
+                commands.append(('step', 'medium'))
+                continue
+            if any(k in clause for k in ('big', '大步', '大')):
+                commands.append(('step', 'big'))
+                continue
+            if any(k in clause for k in ('stop', 'halt', '停止', '停')):
+                commands.append(('stop', None))
+                continue
+            if any(k in clause for k in ('stretch', 'towards sound', 'face sound', '朝聲音')):
+                commands.append(('stretch', None))
+                continue
+
+            has_forward = (
+                re.search(r"\bforward\b", clause) is not None
+                or '前進' in clause or '往前' in clause
+            )
+            has_back = (
+                re.search(r"\bback(?:ward)?\b", clause) is not None
+                or '後退' in clause or '往後' in clause
+            )
+            has_left = (
+                re.search(r"\bleft\b", clause) is not None
+                or '左轉' in clause
+            )
+            has_right = (
+                re.search(r"\bright\b", clause) is not None
+                or '右轉' in clause
+            )
+
+            distance = self._extract_distance_m(clause)
+            angle = self._extract_angle_rad(clause)
+            cfg = self.manual_step_cfg[self.manual_step_size]
+
+            if has_forward:
+                commands.append(('forward', distance if distance is not None else cfg['translate']))
+            if has_back:
+                dist = distance if distance is not None else cfg['translate']
+                commands.append(('back', dist))
+            if has_left:
+                commands.append(('left', angle if angle is not None else cfg['rad']))
+            if has_right:
+                ang = angle if angle is not None else cfg['rad']
+                commands.append(('right', ang))
+
+        return commands
+
+    def _is_motion_task_active(self):
+        """白點任務進行中時，不接受手動底盤命令，避免控制衝突。"""
+        return (
+            self.post_task_phase is not None
+            or self.selection_phase != 'select_first_point'
+            or self.target_world is not None
+            or self.target_locked
+        )
+
+    def _handle_keyword_command(self, raw_text: str, source: str):
+        commands = self._parse_motion_commands(raw_text)
+        if not commands:
+            return False
+
+        # 先處理步長與停止命令
+        for cmd, value in commands:
+            if cmd == 'step':
+                self.manual_step_size = value
+                self.get_logger().info(f"[{source}] Step size set to: {value}")
+
+        if any(cmd == 'stop' for cmd, _ in commands):
+            self.manual_motion_queue.clear()
+            self.manual_cmd_until_ns = 0
+            self.manual_twist = Twist()
+            self.cmd_vel_pub.publish(Twist())
+            self.get_logger().info(f"[{source}] Manual motion stopped.")
+
+        motion_commands = [x for x in commands if x[0] in ('forward', 'back', 'left', 'right', 'stretch')]
+        if not motion_commands:
+            return True
+
+        if self._is_motion_task_active():
+            self.get_logger().warn(
+                f"[{source}] Ignore manual command while white-point task is active: {raw_text}"
+            )
+            return True
+
+        # 接到新移動命令就覆蓋舊排程
+        self.manual_motion_queue.clear()
+        self.manual_cmd_until_ns = 0
+
+        for cmd, value in motion_commands:
+            if cmd == 'stretch':
+                angle = self.sound_direction_rad
+                if abs(angle) < (2.0 * self.rad_per_deg):
+                    self.get_logger().info(f"[{source}] stretch ignored: sound direction too small.")
+                    continue
+                self._start_manual_rotation(angle)
+                continue
+
+            if cmd == 'forward':
+                self._start_manual_translation(abs(float(value)))
+                continue
+            if cmd == 'back':
+                self._start_manual_translation(-abs(float(value)))
+                continue
+            if cmd == 'left':
+                self._start_manual_rotation(abs(float(value)))
+                continue
+            if cmd == 'right':
+                self._start_manual_rotation(-abs(float(value)))
+                continue
+
+        self._ensure_manual_motion_running()
+        self.get_logger().info(f"[{source}] queued manual commands: {motion_commands}")
+        return True
+
+    def _ensure_manual_motion_running(self):
+        now_ns = self.get_clock().now().nanoseconds
+        if self.manual_cmd_until_ns > now_ns:
+            return
+        if not self.manual_motion_queue:
+            return
+        twist, duration = self.manual_motion_queue.pop(0)
+        self.manual_twist = twist
+        self.manual_cmd_until_ns = now_ns + int(max(0.1, duration) * 1e9)
+
+    def _queue_manual_twist(self, twist: Twist, duration: float):
+        self.manual_motion_queue.append((twist, max(0.1, duration)))
+
+    def _start_manual_translation(self, distance_m: float):
+        speed = max(0.05, abs(self.manual_lin_speed))
+        duration = max(0.1, abs(distance_m) / speed)
+        twist = Twist()
+        twist.linear.x = speed if distance_m >= 0.0 else -speed
+        self._queue_manual_twist(twist, duration)
+
+    def _start_manual_rotation(self, angle_rad: float):
+        speed = max(0.2, abs(self.manual_ang_speed))
+        duration = max(0.1, abs(angle_rad) / speed)
+        twist = Twist()
+        twist.angular.z = speed if angle_rad >= 0.0 else -speed
+        self._queue_manual_twist(twist, duration)
+
+    def _apply_manual_motion_if_needed(self):
+        """手動命令執行中時，優先覆蓋自動控制。"""
+        now_ns = self.get_clock().now().nanoseconds
+        if self.manual_cmd_until_ns > 0 and now_ns < self.manual_cmd_until_ns:
+            self.cmd_vel_pub.publish(self.manual_twist)
+            return True
+
+        if self.manual_cmd_until_ns > 0 and now_ns >= self.manual_cmd_until_ns:
+            self.manual_cmd_until_ns = 0
+            self.cmd_vel_pub.publish(Twist())
+
+        if self.manual_motion_queue:
+            self._ensure_manual_motion_running()
+            if self.manual_cmd_until_ns > 0:
+                self.cmd_vel_pub.publish(self.manual_twist)
+                return True
+
+        return False
+
     def update_trajectory(self):
         """更新機器人軌跡記錄"""
         try:
@@ -1393,6 +1673,10 @@ class WhitePointFullMotion(Node):
         # 更新軌跡和視覺化
         self.update_trajectory()
         self.publish_visualization_markers()
+
+        # 手動關鍵字控制優先，避免與自動流程同時輸出底盤命令
+        if self._apply_manual_motion_if_needed():
+            return
 
         # 任務完成後的後退流程（優先處理，直接 return）
         if self.post_task_phase is not None:
@@ -1974,6 +2258,9 @@ class WhitePointFullMotion(Node):
         self.joints_retry_not_before_ns = 0
         self.arm_goal_handle = None
         self.arm_result = None
+        self.manual_cmd_until_ns = 0
+        self.manual_twist = Twist()
+        self.manual_motion_queue.clear()
         self._pre_second_align_phase = 'rotate'  # 重置橫向對齊狀態
         self.set_selection_phase('select_first_point')
         self.get_logger().info("Ready for next target.")

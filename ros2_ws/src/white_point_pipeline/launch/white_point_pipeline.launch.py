@@ -12,6 +12,7 @@ White Point Pipeline Launch 檔
 CAMERA = 'd435i'
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -120,6 +121,25 @@ def launch_setup(context, *args, **kwargs):
         launch_arguments={
             'mode': LaunchConfiguration('mode'),
             'broadcast_odom_tf': 'True',
+        }.items()
+    ))
+
+    # -------------------------
+    # Optional ReSpeaker + speech_to_text
+    # -------------------------
+    nodes.append(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('respeaker_ros2'),
+                'launch',
+                'respeaker.launch.py'
+            ])
+        ]),
+        condition=IfCondition(LaunchConfiguration('enable_respeaker')),
+        launch_arguments={
+            'language': LaunchConfiguration('speech_language'),
+            'self_cancellation': LaunchConfiguration('speech_self_cancellation'),
+            'launch_soundplay': 'True',
         }.items()
     ))
 
@@ -265,6 +285,21 @@ def generate_launch_description():
             'use_compressed_color',
             default_value='true',
             description='Use compressed color topic for GUI (/color/image_raw/compressed)',
+        ),
+        DeclareLaunchArgument(
+            'enable_respeaker',
+            default_value='true',
+            description='Launch ReSpeaker pipeline (/speech_to_text and /sound_direction)',
+        ),
+        DeclareLaunchArgument(
+            'speech_language',
+            default_value='en-US',
+            description='Language for speech_to_text node',
+        ),
+        DeclareLaunchArgument(
+            'speech_self_cancellation',
+            default_value='true',
+            description='Pause speech recognition while sound_play is speaking',
         ),
 
         # === 動態產生相機 + pipeline 節點 ===

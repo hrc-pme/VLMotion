@@ -86,6 +86,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from std_msgs.msg import String
 from geometry_msgs.msg import Point, PointStamped
+from speech_recognition_msgs.msg import SpeechRecognitionCandidates
 from cv_bridge import CvBridge
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
@@ -432,6 +433,7 @@ class ROSSignalBridge(QObject):
     model_output_signal = pyqtSignal(str)
     point3d_signal = pyqtSignal(float, float, float)
     selection_phase_signal = pyqtSignal(str)
+    speech_text_signal = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
@@ -558,6 +560,14 @@ class WhitePointGUI(Node):
         # 發布使用者輸入
         self.user_input_pub = self.create_publisher(String, '/user_input', 10)
 
+        # 訂閱 ReSpeaker speech_to_text（供 GUI 按鈕語音輸入使用）
+        self.speech_to_text_sub = self.create_subscription(
+            SpeechRecognitionCandidates,
+            '/speech_to_text',
+            self.speech_to_text_callback,
+            10
+        )
+
         # ── 深度影像 + 相機內參（用於多點選擇時的 3D 投影）──
         self.declare_parameter('depth_topic', '')
         self.declare_parameter('camera_info_topic', '')
@@ -631,6 +641,15 @@ class WhitePointGUI(Node):
     def selection_phase_callback(self, msg: String):
         """接收選點階段更新"""
         self.signal_bridge.selection_phase_signal.emit(msg.data.strip())
+
+    def speech_to_text_callback(self, msg: SpeechRecognitionCandidates):
+        """接收 speech_to_text 文字並轉發到 Qt"""
+        try:
+            text = ' '.join(map(str, msg.transcript)).strip()
+        except Exception:
+            text = ''
+        if text:
+            self.signal_bridge.speech_text_signal.emit(text)
 
     def publish_pixel(self, x: int, y: int):
         """發布點擊的像素座標"""
@@ -717,6 +736,12 @@ class MainWindow(QMainWindow):
         self.voice_capture_duration = 4.0
         self.voice_available, self.voice_unavailable_reason = voice_support_status()
         self.is_processing_voice = False
+        self.voice_waiting_ros_stt = False
+        self.voice_use_ros_stt = True
+        self.voice_ros_timeout_ms = int((self.voice_capture_duration + 2.0) * 1000)
+        self.voice_timeout_timer = QTimer(self)
+        self.voice_timeout_timer.setSingleShot(True)
+        self.voice_timeout_timer.timeout.connect(self.on_voice_listen_timeout)
         self.selection_phase = "select_first_point"
 
         # ================================================
@@ -860,6 +885,7 @@ class MainWindow(QMainWindow):
         self.signal_bridge.model_output_signal.connect(self.add_model_output)
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
         self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
+        self.signal_bridge.speech_text_signal.connect(self.on_ros_speech_text)
         
         # Qt 信號
         self.image_label.clicked.connect(self.on_image_clicked)
@@ -1028,6 +1054,24 @@ class MainWindow(QMainWindow):
         text = self.input_field.text().strip()
         if not text:
             return
+
+        normalized_text = text.lower().strip()
+        normalized_text = re.sub(r"[\.,!?，。！？]", " ", normalized_text)
+        normalized_text = " ".join(normalized_text.split())
+        normalized_text_padded = f" {normalized_text} "
+
+        # 與 full_motion 的關鍵字語義對齊：支援片語（例如 go forward）
+        english_single_tokens = {
+            "forward", "back", "backward", "left", "right", "stretch", "stop", "halt",
+            "small", "medium", "big",
+        }
+        english_phrases = {
+            "go forward", "go back", "turn left", "turn right", "towards sound", "face sound",
+        }
+        chinese_aliases = {
+            "前進", "往前", "往前走", "後退", "往後", "往後退", "左轉", "右轉",
+            "停止", "停", "小", "中", "大", "小步", "中步", "大步", "朝聲音",
+        }
         
         # 顯示使用者輸入（不含隱藏的格式指示）
         self.output_text.append(f"<b style='color: #4CAF50;'>You:</b> {text}")
@@ -1040,6 +1084,19 @@ class MainWindow(QMainWindow):
         
         # 清空輸入欄位
         self.input_field.clear()
+
+        # 關鍵字控制命令：只發 ROS，不送 LLM（避免多餘推論）
+        is_control_keyword = False
+        tokens = set(normalized_text.split())
+        if english_single_tokens.intersection(tokens):
+            is_control_keyword = True
+        elif any((f" {phrase} " in normalized_text_padded) for phrase in english_phrases):
+            is_control_keyword = True
+        elif any(alias in normalized_text for alias in chinese_aliases):
+            is_control_keyword = True
+
+        if is_control_keyword:
+            return
         
         # 取得當前影像（使用按下 Enter 時的影像）
         image = None
@@ -1431,24 +1488,58 @@ class MainWindow(QMainWindow):
     
     def handle_voice_button(self):
         """處理語音按鈕點擊"""
-        if not self.voice_available:
-            self.output_text.append(f"<b style='color: #F44336;'>Voice input unavailable:</b> {self.voice_unavailable_reason}")
-            return
-        
         if self.is_processing_voice:
             return
         
         self.is_processing_voice = True
         self.voice_button.setEnabled(False)
+        self.voice_button.setText("Listening...")
+
+        # 優先使用 ROS speech_to_text（不需再直接占用麥克風）
+        if self.voice_use_ros_stt:
+            self.voice_waiting_ros_stt = True
+            self.voice_timeout_timer.start(self.voice_ros_timeout_ms)
+            return
+
+        self._start_legacy_voice_capture()
+
+    def _start_legacy_voice_capture(self):
+        """Fallback：使用舊版 PyAudio + Wit.ai 錄音辨識。"""
+        if not self.voice_available:
+            self.on_voice_error(
+                self.voice_unavailable_reason or "Voice capture backend unavailable."
+            )
+            self.on_voice_finished()
+            return
+
         self.voice_button.setText("Recording...")
-        
-        # 創建新的語音辨識執行緒
         self.voice_thread = VoiceRecognitionThread(duration_sec=self.voice_capture_duration)
         self.voice_thread.result_ready.connect(self.on_voice_result)
         self.voice_thread.error.connect(self.on_voice_error)
         self.voice_thread.status_changed.connect(self.on_voice_status_changed)
         self.voice_thread.finished.connect(self.on_voice_finished)
         self.voice_thread.start()
+
+    def on_ros_speech_text(self, text: str):
+        """收到 ROS STT 結果後，完成按鈕語音輸入流程。"""
+        if not self.is_processing_voice or not self.voice_waiting_ros_stt:
+            return
+        self.voice_waiting_ros_stt = False
+        if self.voice_timeout_timer.isActive():
+            self.voice_timeout_timer.stop()
+        self.on_voice_result(text)
+        self.on_voice_finished()
+
+    def on_voice_listen_timeout(self):
+        """等待 ROS STT 逾時時，回退到舊版錄音流程。"""
+        if not self.is_processing_voice or not self.voice_waiting_ros_stt:
+            return
+        self.voice_waiting_ros_stt = False
+        if self.voice_available:
+            self._start_legacy_voice_capture()
+            return
+        self.on_voice_error("No /speech_to_text result received. Please check ReSpeaker node.")
+        self.on_voice_finished()
     
     def on_voice_result(self, text: str):
         """處理語音辨識結果"""
@@ -1466,20 +1557,21 @@ class MainWindow(QMainWindow):
     
     def on_voice_finished(self):
         """語音辨識完成"""
+        if self.voice_timeout_timer.isActive():
+            self.voice_timeout_timer.stop()
+        self.voice_waiting_ros_stt = False
         self.is_processing_voice = False
         self.voice_thread = None
         self._update_voice_button_state()
     
     def _update_voice_button_state(self):
         """更新語音按鈕的啟用狀態和文字"""
-        if not self.voice_available:
-            self.voice_button.setEnabled(False)
-            self.voice_button.setText("Voice Unavailable")
-            self.voice_button.setToolTip(self.voice_unavailable_reason)
+        self.voice_button.setEnabled(True)
+        self.voice_button.setText("Voice Input")
+        if self.voice_available:
+            self.voice_button.setToolTip("Click to listen from /speech_to_text, then fallback to local recording if needed")
         else:
-            self.voice_button.setEnabled(True)
-            self.voice_button.setText("Voice Input")
-            self.voice_button.setToolTip("Click to start voice input (about 4 sec)")
+            self.voice_button.setToolTip("Click to listen from /speech_to_text (local PyAudio fallback unavailable)")
 
     def _get_next_filename(self, directory: str) -> str:
         """
