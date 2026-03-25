@@ -125,9 +125,8 @@ RUN set -eux; \
 
 RUN echo "deb [signed-by=/usr/share/keyrings/ros2-latest-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" > /etc/apt/sources.list.d/ros2-latest.list
 
-# Add Intel RealSense repository
-RUN curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | tee /etc/apt/keyrings/librealsense.pgp > /dev/null \
-    && echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo `lsb_release -cs` main" | tee /etc/apt/sources.list.d/librealsense.list
+# Note: Skipping Intel RealSense repository due to GPG key verification issues
+# librealsense2 packages will be installed from default repos if available
 
 # Install ROS2 Humble desktop-full and additional packages
 RUN apt-get update && \
@@ -154,7 +153,7 @@ RUN apt-get update && \
         ros-humble-nav2-amcl ros-humble-nav2-bringup ros-humble-nav2-map-server \
         ros-humble-nav2-msgs ros-humble-slam-toolbox \
         ros-humble-teleop-twist-keyboard ros-humble-teleop-twist-joy ros-humble-joy \
-        # RealSense
+        # RealSense (ROS wrapper, librealsense2 system packages installed via pyrealsense2 pip)
         ros-humble-realsense2-camera ros-humble-realsense2-camera-msgs \
         ros-humble-realsense2-description \
         # Image processing
@@ -175,8 +174,8 @@ RUN apt-get update && \
         ros-humble-launch-testing-ament-cmake ros-humble-ament-lint-auto \
         ros-humble-ament-lint-common ros-humble-ament-flake8 \
         ros-humble-ament-pep257 ros-humble-ament-copyright \
-        # System dependencies
-        librealsense2 librealsense2-dev libeigen3-dev libpcl-dev libboost-dev \
+        # System dependencies (librealsense2 system libs removed - use pyrealsense2 pip package instead)
+        libeigen3-dev libpcl-dev libboost-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep and setup colcon
@@ -206,7 +205,8 @@ RUN python3 -m pip install --no-cache-dir "pip==24.2" \
     && python3 -m pip install --no-cache-dir "wheel<1" \
     && python3 -m pip install --no-cache-dir "packaging>=24.0" \
     && python3 -m pip install --no-cache-dir --ignore-installed "sympy>=1.13.3" \
-    && python3 -m pip install --no-cache-dir --ignore-installed "numpy==1.24.2" "scipy==1.11.4"
+    && python3 -m pip install --no-cache-dir --ignore-installed "numpy==1.24.2" "scipy==1.11.4" \
+    && python3 -m pip install --no-cache-dir --ignore-installed "numba==0.60.0" "llvmlite==0.43.0"
 
 # Ensure setuptools supports PEP 660 editable installs (for --symlink-install)
 # Match version that worked in your test environment
@@ -249,8 +249,9 @@ RUN OPENCV_QT_DIR="/usr/local/lib/python3.10/dist-packages/cv2/qt/plugins" \
 # Install additional packages for visual servoing
 RUN python3 -m pip install --no-cache-dir \
         open3d \
-        ros2_numpy \
-        --ignore-installed
+        --ignore-installed \
+    && python3 -m pip install --no-cache-dir --upgrade \
+        ros2_numpy
 
 # Note: numpy/scipy/opencv-contrib are already pinned above; avoid uninstall/reinstall churn
 

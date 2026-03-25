@@ -83,6 +83,7 @@ def launch_setup(context, *args, **kwargs):
     camera_name = CAMERA
     controller_url = LaunchConfiguration('controller_url').perform(context)
     model_path = LaunchConfiguration('model_path').perform(context)
+    use_compressed_color = LaunchConfiguration('use_compressed_color').perform(context)
 
     cam = load_camera_config(camera_name)
     cal = load_calibration_defaults(camera_name)
@@ -94,7 +95,8 @@ def launch_setup(context, *args, **kwargs):
     link_adjusted = cam['link_adjusted_name']
 
     # 組合 topic 名稱
-    color_topic = f'{prefix}/color/image_raw'
+    use_compressed = str(use_compressed_color).lower() in ('1', 'true', 'yes', 'on')
+    color_topic = f'{prefix}/color/image_raw/compressed' if use_compressed else f'{prefix}/color/image_raw'
     depth_topic = f'{prefix}/aligned_depth_to_color/image_raw'
     camera_info_topic = f'{prefix}/color/camera_info'
 
@@ -217,6 +219,23 @@ def launch_setup(context, *args, **kwargs):
         }],
     ))
 
+    # ── 7. map -> odom 靜態 TF（身份變換）──
+    nodes.append(Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_to_odom_publisher',
+        arguments=[
+            '--x', '0',
+            '--y', '0',
+            '--z', '0',
+            '--roll', '0',
+            '--pitch', '0',
+            '--yaw', '0',
+            '--frame-id', 'map',
+            '--child-frame-id', 'odom'
+        ]
+    ))
+
     return nodes
 
 
@@ -239,8 +258,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'model_path',
-            default_value='PME033541/vla10',
+            default_value='PME033541/vla11',
             description='Model to load in the VLPoint GUI',
+        ),
+        DeclareLaunchArgument(
+            'use_compressed_color',
+            default_value='true',
+            description='Use compressed color topic for GUI (/color/image_raw/compressed)',
         ),
 
         # === 動態產生相機 + pipeline 節點 ===

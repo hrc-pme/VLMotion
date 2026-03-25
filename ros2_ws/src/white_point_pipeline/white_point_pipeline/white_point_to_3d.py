@@ -12,6 +12,7 @@ import math
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 from rclpy.time import Time as RclpyTime
+from rclpy.duration import Duration as RclpyDuration
 from sklearn.cluster import DBSCAN
 
 # ----------------------------------------------------------
@@ -545,8 +546,17 @@ class WhitePointTo3D(Node):
         )
 
         # 使用 launch 設定的 color optical frame（會跟著相機旋轉）
+        # 關鍵：使用 depth 訊息時間戳，避免影像與 TF 時間不同步。
+        tf_time = None
+        if self.depth_msg_header is not None:
+            tf_time = RclpyTime.from_msg(self.depth_msg_header.stamp)
+
         pt_cam = PointStamped()
-        pt_cam.header.stamp = self.get_clock().now().to_msg()
+        pt_cam.header.stamp = (
+            self.depth_msg_header.stamp
+            if self.depth_msg_header is not None
+            else self.get_clock().now().to_msg()
+        )
         pt_cam.header.frame_id = self.camera_frame
         pt_cam.point.x = Xo
         pt_cam.point.y = Yo
@@ -555,11 +565,20 @@ class WhitePointTo3D(Node):
         try:
             # 直接從相機光學座標系轉到 base_link
             # TF 系統會自動處理所有中間的轉換
-            tf = self.tf_buffer.lookup_transform(
-                'base_link',
-                self.camera_frame,
-                RclpyTime()
-            )
+            if tf_time is not None:
+                tf = self.tf_buffer.lookup_transform(
+                    'base_link',
+                    self.camera_frame,
+                    tf_time,
+                    timeout=RclpyDuration(seconds=0.1)
+                )
+            else:
+                tf = self.tf_buffer.lookup_transform(
+                    'base_link',
+                    self.camera_frame,
+                    RclpyTime(),
+                    timeout=RclpyDuration(seconds=0.1)
+                )
             pt_base = do_transform_point(pt_cam, tf)
 
             self.point_pub.publish(pt_base)
@@ -703,6 +722,32 @@ class WhitePointTo3D(Node):
             else:
                 self.get_logger().warn(f'Patch points too few: {len(pts_base)} < {self.min_plane_pts}')
         except Exception as e:
+            # 若時間戳查詢失敗（啟動初期/TF cache不足），退回 latest 以維持流程可用。
+            if tf_time is not None:
+                try:
+                    tf = self.tf_buffer.lookup_transform(
+                        'base_link',
+                        self.camera_frame,
+                        RclpyTime(),
+                        timeout=RclpyDuration(seconds=0.1)
+                    )
+                    pt_base = do_transform_point(pt_cam, tf)
+                    self.point_pub.publish(pt_base)
+                    self.get_logger().warn(
+                        f'Timestamped TF lookup failed, fallback to latest TF: {e}',
+                        throttle_duration_sec=2.0
+                    )
+                    self.get_logger().info(
+                        f'BASE frame: Xb={pt_base.point.x:.3f}, '
+                        f'Yb={pt_base.point.y:.3f}, Zb={pt_base.point.z:.3f}'
+                    )
+                    return
+                except Exception as fallback_e:
+                    self.get_logger().warn(
+                        f'Failed to transform point (fallback also failed): {fallback_e}'
+                    )
+                    return
+
             self.get_logger().warn(f'Failed to transform point: {e}')
 
 def main(args=None):

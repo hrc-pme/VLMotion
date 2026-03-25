@@ -1,6 +1,6 @@
 jobs:
   - input_paths:                      # Paths to bag folders
-      - "/workspace/Outputs/rosbags/test/0001"
+      - "/workspace/Outputs/rosbags/test/0006"
     output_root: "/workspace/Outputs/mp4/test"       # Output MP4 folder
     topic: "/camera/camera/color/image_raw/compressed"        # Image topic   # Omit → auto-pick if only one; error if multiple
     fps:                               # Frames per second    # Omit → auto infer from timestamps

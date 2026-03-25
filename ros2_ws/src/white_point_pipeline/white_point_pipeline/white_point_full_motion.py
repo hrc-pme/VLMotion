@@ -82,6 +82,11 @@ class WhitePointFullMotion(Node):
         self.arm_max = 0.5
         self.gripper_z_offset = 0.1
         self.gripper_y_offset_base = -0.1  # 夾爪中心在 base_link 的 Y 偏移（左側為負）
+        self.first_lift_adaptive_enabled = True
+        self.first_lift_far_dist_near = 0.5   # 近距離起算（m）
+        self.first_lift_far_dist_far = 1.6    # 遠距離上限（m）
+        self.first_lift_max_drop = 0.12       # 最多下修 12cm
+        self.first_lift_max_cap = 0.90        # 第一次抬升上限（m），避免一開始抬太高
         
         # 精確抵達目標的參數
         self.gripper_reach_thresh = 0.015  # 一般近距離參考值（1.5cm）
@@ -505,9 +510,10 @@ class WhitePointFullMotion(Node):
             self.orange_point_world.x += dx
             self.orange_point_world.y += dy
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f"🎯 Target corrected (XY only): pixel=({u},{v}), "
-            f"ΔX={dx*100:.1f}cm, ΔY={dy*100:.1f}cm"
+            f"ΔX={dx*100:.1f}cm, ΔY={dy*100:.1f}cm",
+            throttle_duration_sec=1.0
         )
 
     # ================================================
@@ -1651,7 +1657,7 @@ class WhitePointFullMotion(Node):
             ang_cmd = max(-self.max_ang, min(self.max_ang, self.k_ang * angle_to_orange))
             twist.angular.z = ang_cmd
             twist.linear.x = 0.0
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Aligning to orange point: angle_error={math.degrees(angle_to_orange):.1f}°, "
                 f"dist={dist_world:.3f}m"
             )
@@ -1665,7 +1671,7 @@ class WhitePointFullMotion(Node):
             ang_cmd = max(-self.max_ang * 0.3, min(self.max_ang * 0.3, self.k_ang * angle_to_orange))
             twist.angular.z = ang_cmd
             
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Moving to orange point: dist={dist_world:.3f}m, lin_cmd={lin_cmd:.3f}, "
                 f"angle_error={math.degrees(angle_to_orange):.1f}°"
             )
@@ -1727,7 +1733,7 @@ class WhitePointFullMotion(Node):
             twist.linear.x = 0.0
             twist.angular.z = max(-self.max_ang, min(self.max_ang, self.k_ang * yaw_error))
             self.cmd_vel_pub.publish(twist)
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"[Phase1] Rotating before 2nd selection: yaw_error={math.degrees(yaw_error):.1f}°",
                 throttle_duration_sec=0.5
             )
@@ -1796,7 +1802,7 @@ class WhitePointFullMotion(Node):
                 )
 
             self.cmd_vel_pub.publish(twist)
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"[Phase2] Lateral gripper alignment: "
                 f"error={lateral_error * 100:.1f}cm, "
                 f"move_yaw={math.degrees(move_yaw):.1f}°, "
@@ -2142,15 +2148,21 @@ class WhitePointFullMotion(Node):
             self._last_head_pan = None
             self._last_head_tilt = None
             self._head_sending = False
+            self._last_head_cmd_time_ns = 0
         
         # 如果正在發送或變化太小，跳過
         if self._head_sending:
+            return
+
+        now_ns = self.get_clock().now().nanoseconds
+        min_interval_ns = int(0.8 * 1e9)  # 最快約 1.25 Hz
+        if now_ns - self._last_head_cmd_time_ns < min_interval_ns:
             return
         
         if self._last_head_pan is not None and self._last_head_tilt is not None:
             pan_diff = abs(head_pan - self._last_head_pan)
             tilt_diff = abs(head_tilt - self._last_head_tilt)
-            if pan_diff < math.radians(2) and tilt_diff < math.radians(2):
+            if pan_diff < math.radians(5) and tilt_diff < math.radians(5):
                 return
         
         if not self.trajectory_client.wait_for_server(timeout_sec=0.1):
@@ -2168,6 +2180,7 @@ class WhitePointFullMotion(Node):
         self._head_sending = True
         self._last_head_pan = head_pan
         self._last_head_tilt = head_tilt
+        self._last_head_cmd_time_ns = now_ns
         
         send_goal_future = self.trajectory_client.send_goal_async(goal)
         send_goal_future.add_done_callback(self._head_goal_response_callback)
@@ -2233,7 +2246,44 @@ class WhitePointFullMotion(Node):
             return False
 
         target_z = self.current_target.z
-        lift_target = max(self.lift_min, min(self.lift_max, target_z - self.gripper_z_offset))
+        unclamped_lift = target_z - self.gripper_z_offset
+        lift_target = max(self.lift_min, min(self.lift_max, unclamped_lift))
+
+        # 第一次選點階段：距離越遠，對高度越保守，降低遠距離深度誤差造成的過高 lift
+        adaptive_drop = 0.0
+        dist_xy = float('nan')
+        apply_first_stage_guard = (
+            self.first_lift_adaptive_enabled
+            and (not self.second_selection_done)
+            and (not self.is_close_range_mode)
+            and self.current_target is not None
+        )
+        if apply_first_stage_guard:
+            dist_xy = math.hypot(self.current_target.x, self.current_target.y)
+            near_d = self.first_lift_far_dist_near
+            far_d = max(near_d + 1e-6, self.first_lift_far_dist_far)
+            alpha = max(0.0, min(1.0, (dist_xy - near_d) / (far_d - near_d)))
+            adaptive_drop = alpha * self.first_lift_max_drop
+            lift_target = max(self.lift_min, lift_target - adaptive_drop)
+            lift_target = min(lift_target, self.first_lift_max_cap)
+
+        world_z = self.target_world.z if self.target_world is not None else float('nan')
+        self.get_logger().info(
+            "[LiftHeight] world_z=%.3fm -> base_z=%.3fm, offset=%.3fm, unclamped_lift=%.3fm, adaptive_drop=%.3fm, final_lift=%.3fm"
+            % (
+                world_z,
+                target_z,
+                self.gripper_z_offset,
+                unclamped_lift,
+                adaptive_drop,
+                lift_target,
+            )
+        )
+
+        if apply_first_stage_guard:
+            self.get_logger().info(
+                f"[LiftGuard:first_stage] dist_xy={dist_xy:.3f}m, drop={adaptive_drop:.3f}m, cap={self.first_lift_max_cap:.3f}m"
+            )
 
         self.get_logger().info(
             f"Raising lift to: {lift_target:.3f}m (arm stays at 0)"
@@ -2972,7 +3022,7 @@ class WhitePointFullMotion(Node):
             ang_cmd = max(-self.final_max_ang, min(self.final_max_ang, self.k_ang * yaw_error))
             twist.angular.z = ang_cmd
             twist.linear.x = 0.0
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Aligning ({mode_str}): yaw_error={math.degrees(yaw_error):.1f}°, "
                 f"center_dist={center_dist_3d:.3f}m, xy_dist={dist_world_xy:.3f}m, "
                 f"Y_base={dy_base*100:.1f}cm"
@@ -2987,7 +3037,7 @@ class WhitePointFullMotion(Node):
             ang_cmd = max(-self.final_max_ang * 0.3, min(self.final_max_ang * 0.3, self.k_ang * yaw_error))
             twist.angular.z = ang_cmd
             
-            self.get_logger().info(
+            self.get_logger().debug(
                 f"Moving ({mode_str}): center_dist={center_dist_3d:.3f}m, xy_dist={dist_world_xy:.3f}m, "
                 f"X_base={dx_base*100:.1f}cm, "
                 f"Y_base={dy_base*100:.1f}cm, yaw_error={math.degrees(yaw_error):.1f}°"
