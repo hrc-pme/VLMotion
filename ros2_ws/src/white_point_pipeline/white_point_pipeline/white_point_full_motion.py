@@ -163,6 +163,15 @@ class WhitePointFullMotion(Node):
         self.close_range_backup_start = None  # 後退開始時的位置
         self.close_range_backup_dist = 0.20  # 後退距離（20cm，確保有足夠空間旋轉和重新對齊）
         self.tangent_offset_distance = 0.15  # 橘色點沿切線偏移距離（15 公分）
+        self.second_tangent_offset_distance = 0.07  # 第二次選點時縮小側偏，減少大幅轉向
+        self.orange_near_skip_dist = 0.06  # 第二階段若已接近橘色點，直接視為到位（6cm）
+        self.orange_heading_limit_far = math.radians(35.0)   # 遠距離最大角度修正
+        self.orange_heading_limit_near = math.radians(15.0)  # 近距離最大角度修正
+        self.orange_heading_near_dist = 0.25  # 近距離門檻（m）
+        self.second_stage_skip_prealign_when_near = True  # 第二階段若已近準備位，略過二次預對齊
+        self.second_stage_prefer_direct_mode = True  # 第二階段最終接近優先直達目標
+        self.auto_single_click_second_stage_dist = 0.75  # 自動單點模式門檻：夾爪到目標 <= 75cm 時直接走第二階段邏輯
+        self.auto_direct_to_target_dist = 0.25  # 超近距離門檻：夾爪到目標 <= 25cm 時直接進最終接近
         self.final_gripper_dist_thresh = self.center_alignment_thresh  # 最終以中心對中心距離判定
         self.final_max_lin = 0.10  # 10 cm/s，穩定移動
         self.final_max_ang = 0.4
@@ -171,10 +180,17 @@ class WhitePointFullMotion(Node):
         self.final_yaw_freeze_xy_thresh = 0.02  # XY < 2cm 時停止用 yaw 誤差做轉向（避免角度奇異點抖動）
         self.final_reach_hysteresis = 0.001     # 到達判定遲滯（1mm）
         self.final_reach_hold_cycles = 4        # 連續達標週期數，避免噪聲來回跳
+        self.button_press_forward_dist = 0.01   # 到點後底盤額外前進 1cm 做按壓
+        self.button_press_forward_speed = 0.02  # 按壓前進速度（m/s）
+        self.button_press_active = False
+        self.button_press_start_pos = None
 
         # 近距離模式專用參數
         self.close_range_min_dist = float('inf')  # 追蹤最小距離
         self.close_range_approach_start_dist = None  # approach 開始時的距離
+        self.close_range_z_realign_attempts = 0  # 近距離末段 Z 重調已嘗試次數
+        self.close_range_z_realign_max_attempts = 2  # 近距離末段 Z 重調上限
+        self.close_range_z_realign_lift_epsilon = 0.005  # 若 lift 變化 < 5mm，視為重調無效
 
         # 任務完成後的後退流程狀態
         self.post_task_phase = None           # None / 'waiting' / 'backing_up'
@@ -243,12 +259,29 @@ class WhitePointFullMotion(Node):
         self.cam_K = None  # 3x3 內參矩陣
         
         # 動態追蹤參數
-        self.target_tracking_enabled = True  # 是否啟用動態追蹤
+        # 預設關閉全域動態追蹤，避免目標在長距離移動中被漂移。
+        # 末段由 D405 導引函式做局部閉迴路修正。
+        self.target_tracking_enabled = False
         self.tracking_update_interval = 0.2  # 更新間隔（秒）
         self.last_tracking_update = None
         self.tracking_correction_gain = 0.3  # 校正增益（0~1），避免過度修正
         self.tracking_max_correction = 0.05  # 單次最大校正距離（米）
         self.last_target_pixel = None  # 上次投影的像素位置（用於調試）
+
+        # D405 末段閉迴路導引（粗定位完成後啟用）
+        self.d405_final_servo_enabled = True
+        self.d405_final_filter_alpha = 0.35
+        self.d405_final_max_jump_xy = 0.08
+        self.d405_final_max_jump_z = 0.06
+        self.d405_final_enable_dist_xy = 0.30
+        self.d405_final_anchor_max_xy = 0.08
+        self.d405_final_anchor_max_z = 0.05
+        self.final_guided_target_world = None
+
+        # Head tracking: 持續追目標，但用低頻與死區避免晃動。
+        self.head_tracking_min_interval_sec = 1.0
+        self.head_tracking_pan_deadband_deg = 8.0
+        self.head_tracking_tilt_deadband_deg = 6.0
 
         self.timer = self.create_timer(0.05, self.control_loop)
         self.selection_phase_timer = self.create_timer(1.0, self.publish_selection_phase)
@@ -443,6 +476,10 @@ class WhitePointFullMotion(Node):
         """
         if not self.target_tracking_enabled:
             return
+
+        # 第二次點選後的目標視為最終錨點，不再用全域追蹤改寫。
+        if self.second_selection_done:
+            return
         
         if self.target_world is None:
             return
@@ -556,6 +593,95 @@ class WhitePointFullMotion(Node):
             f"ΔX={dx*100:.1f}cm, ΔY={dy*100:.1f}cm",
             throttle_duration_sec=1.0
         )
+
+    def get_final_guided_target_from_d405(self):
+        """在末段對位時，使用 D405 深度回投影提供閉迴路目標。
+
+        策略:
+        1) 將目前 world 目標投影到 D405 像素。
+        2) 使用當前深度將像素反投影回 odom。
+        3) 對更新量做限幅與低通濾波，避免抖動與跳點。
+        """
+        if not self.d405_final_servo_enabled or self.target_world is None:
+            return None
+
+        # 只在末段接近目標時啟用 D405 導引，避免遠距離時錯誤深度把目標拉走。
+        gripper_odom = self.get_gripper_center_in_odom()
+        if gripper_odom is None:
+            return self.final_guided_target_world
+        dist_xy = math.hypot(
+            self.target_world.x - gripper_odom.x,
+            self.target_world.y - gripper_odom.y,
+        )
+        if dist_xy > self.d405_final_enable_dist_xy:
+            self.final_guided_target_world = None
+            return None
+
+        pixel = self.project_point_to_pixel(self.target_world)
+        if pixel is None:
+            return self.final_guided_target_world
+
+        u, v = pixel
+        measured = self.backproject_pixel_to_point(u, v)
+        if measured is None:
+            return self.final_guided_target_world
+
+        # 測量值必須維持在「點選目標錨點」附近，否則視為誤匹配（例如掉到地面）。
+        anchor_dx = float(measured.x - self.target_world.x)
+        anchor_dy = float(measured.y - self.target_world.y)
+        anchor_dxy = math.hypot(anchor_dx, anchor_dy)
+        anchor_dz = float(measured.z - self.target_world.z)
+        if anchor_dxy > self.d405_final_anchor_max_xy or abs(anchor_dz) > self.d405_final_anchor_max_z:
+            self.get_logger().debug(
+                f"[D405 final] Reject outlier: dxy={anchor_dxy:.3f}m dz={anchor_dz:.3f}m",
+                throttle_duration_sec=0.5,
+            )
+            return self.final_guided_target_world
+
+        if self.final_guided_target_world is None:
+            guided = Point()
+            # 第一次初始化時，以點選錨點為主，僅小幅吸收 D405 修正。
+            guided.x = float(self.target_world.x + 0.25 * (measured.x - self.target_world.x))
+            guided.y = float(self.target_world.y + 0.25 * (measured.y - self.target_world.y))
+            guided.z = float(self.target_world.z + 0.25 * (measured.z - self.target_world.z))
+            self.final_guided_target_world = guided
+            return guided
+
+        prev = self.final_guided_target_world
+        dx = float(measured.x - prev.x)
+        dy = float(measured.y - prev.y)
+        dz = float(measured.z - prev.z)
+        dxy = math.sqrt(dx * dx + dy * dy)
+
+        if dxy > self.d405_final_max_jump_xy and dxy > 1e-9:
+            scale = self.d405_final_max_jump_xy / dxy
+            dx *= scale
+            dy *= scale
+
+        if abs(dz) > self.d405_final_max_jump_z:
+            dz = math.copysign(self.d405_final_max_jump_z, dz)
+
+        alpha = min(max(self.d405_final_filter_alpha, 0.0), 1.0)
+        guided = Point()
+        guided.x = float(prev.x + alpha * dx)
+        guided.y = float(prev.y + alpha * dy)
+        guided.z = float(prev.z + alpha * dz)
+
+        # 最終導引點同樣限制在錨點附近，避免長時間積分漂移。
+        gdx = guided.x - self.target_world.x
+        gdy = guided.y - self.target_world.y
+        gdxy = math.hypot(gdx, gdy)
+        if gdxy > self.d405_final_anchor_max_xy and gdxy > 1e-9:
+            scale = self.d405_final_anchor_max_xy / gdxy
+            guided.x = self.target_world.x + gdx * scale
+            guided.y = self.target_world.y + gdy * scale
+        if abs(guided.z - self.target_world.z) > self.d405_final_anchor_max_z:
+            guided.z = self.target_world.z + math.copysign(
+                self.d405_final_anchor_max_z, guided.z - self.target_world.z
+            )
+
+        self.final_guided_target_world = guided
+        return guided
 
     # ================================================
     # 收到白點 → 儲存到 world（odom）座標
@@ -698,9 +824,10 @@ class WhitePointFullMotion(Node):
             self.handle_second_target_callback(msg)
             return
 
+        is_retarget = (self.selection_phase == 'moving_to_target')
         if self.target_locked:
             # 允許在前往目標途中重新指定目標，避免流程卡住時無法介入
-            if self.selection_phase != 'moving_to_target':
+            if not is_retarget:
                 return
             self.get_logger().info(
                 "Retarget requested during moving_to_target. Replanning with new clicked point."
@@ -717,69 +844,97 @@ class WhitePointFullMotion(Node):
             # 把白點從 base_link 轉到 odom（原始目標 - 紅色點）
             world_point = do_transform_point(msg, transform)
             new_target = world_point.point
-            
-            # 檢查是否為近距離修正模式
-            # 如果夾爪已經靠近新目標點，直接進入微調模式
+
+            # 自動判斷是否使用「單次點選直達（第二階段邏輯）」
+            # 原則：
+            # 1) moving_to_target 期間重點選，一律走單次直達重規劃
+            # 2) 初次點選但夾爪已接近目標（<= 門檻），也直接走第二階段邏輯
             gripper_center = self.get_gripper_center_in_odom()
-            is_close_range_adjustment = False
             dist_to_new_target = float('inf')
-            
             if gripper_center is not None:
                 dx = gripper_center.x - new_target.x
                 dy = gripper_center.y - new_target.y
                 dz = gripper_center.z - new_target.z
                 dist_to_new_target = math.sqrt(dx*dx + dy*dy + dz*dz)
-                
-                # 如果夾爪距離新目標點小於 30cm，進入近距離修正模式
-                if dist_to_new_target < 0.30:
-                    is_close_range_adjustment = True
-                    self.get_logger().info(
-                        f"🎯 Close-range adjustment mode! Gripper is {dist_to_new_target*100:.1f}cm from new target"
-                    )
+
+            use_single_click_second_stage = (
+                is_retarget
+                or (
+                    math.isfinite(dist_to_new_target)
+                    and dist_to_new_target <= self.auto_single_click_second_stage_dist
+                )
+            )
+            use_direct_to_target = (
+                math.isfinite(dist_to_new_target)
+                and dist_to_new_target <= self.auto_direct_to_target_dist
+            )
             
             self.target_world = new_target
+            self.final_guided_target_world = None
+            self.close_range_z_realign_attempts = 0
             self.base_pos_at_lock = Point()
             self.base_pos_at_lock.x = transform.transform.translation.x
             self.base_pos_at_lock.y = transform.transform.translation.y
             self.base_pos_at_lock.z = transform.transform.translation.z
             
             self.target_locked = True
-            
-            if is_close_range_adjustment:
-                # 近距離修正模式：跳過準備點，直接進行微調
-                self.is_close_range_mode = True  # 設置近距離模式標記
-                self.current_approach_dist = self.first_approach_dist
-                self.close_range_locked_yaw = None  # 重置鎖定方向，讓下次進入時重新計算
-                # 很近時不需要先大幅後退，直接進入 approach 可避免繞圈
-                self.close_range_phase = 'approach' if dist_to_new_target < 0.10 else 'backup'
-                self.close_range_backup_start = None  # 後退開始位置會在控制時設定
-                self.base_aligned = True  # 跳過移動到橘色點
-                self.joints_moved = False  # close-range 也要重新調整 lift 到新目標高度
+
+            if use_single_click_second_stage:
+                # 單次點選：直接套用「第二次點選」策略，避免近距離模式來回後退/旋轉。
+                self.is_close_range_mode = False
+                self.current_approach_dist = self.second_approach_dist
+                self.close_range_locked_yaw = None
+                self.close_range_phase = None
+                self.close_range_backup_start = None
+                self.base_aligned = use_direct_to_target
+                self.joints_moved = False
                 self.arm_extended = False
-                self.wrist_reset_done = True  # 跳過 wrist reset
-                self.final_forward_done = False  # 需要微調前進
+                self.wrist_reset_done = False
+                self.final_forward_done = False
                 self.raw_gripper_reached = False
                 self.forward_target_dist = None
                 self.waiting_for_second_selection = False
                 self.second_selection_done = True
-                self.second_approach_aligned = True
-                
-                # 近距離模式不使用法向量，清除相關變數
-                self.tangent_vec_world = None
-                self.normal_vec_world = None
+                self.second_approach_aligned = use_direct_to_target
+                self.desired_yaw_world = None
                 self.approach_world = None
                 self.orange_point_world = None
-                self.compensated_target_world = None  # 不使用補償
-                self.desired_yaw_world = None
-                
+                self.tangent_vec_world = None
+                self.normal_vec_world = None
+                self.compensated_target_world = None
+                self._pre_second_align_phase = 'rotate'
+
                 self.get_logger().info(
-                    f"Close-range target (red): "
+                    f"Single-click second-stage target (red): "
                     f"Xw={self.target_world.x:.3f}, Yw={self.target_world.y:.3f}, Zw={self.target_world.z:.3f}"
                 )
-                self.get_logger().info(
-                    f"Close-range phase: {self.close_range_phase}. Re-adjusting lift before final approach."
-                )
-                self.set_selection_phase('moving_to_target')
+
+                if is_retarget:
+                    self.get_logger().info(
+                        "↻ Retarget in moving_to_target: directly reuse second-stage planning."
+                    )
+                elif math.isfinite(dist_to_new_target):
+                    self.get_logger().info(
+                        f"🎯 Auto single-click mode: gripper-target distance {dist_to_new_target*100:.1f}cm "
+                        f"<= {self.auto_single_click_second_stage_dist*100:.0f}cm."
+                    )
+
+                if self.panel_axis_base is not None:
+                    self.update_desired_yaw_world()
+                    self.calculate_vectors_world(transform)
+                    if not use_direct_to_target:
+                        self.update_approach_world(approach_dist=self.second_approach_dist)
+                        self.update_orange_point_world()
+                        self.update_compensated_target_world()
+
+                if use_direct_to_target:
+                    self.set_selection_phase('moving_to_target')
+                    self.get_logger().info(
+                        f"🚀 Auto direct-to-target mode: gripper-target distance {dist_to_new_target*100:.1f}cm "
+                        f"<= {self.auto_direct_to_target_dist*100:.0f}cm. Skip approach/orange reposition."
+                    )
+                else:
+                    self.set_selection_phase('moving_to_approach')
             else:
                 # 完整模式：從頭開始
                 self.is_close_range_mode = False  # 清除近距離模式標記
@@ -844,6 +999,7 @@ class WhitePointFullMotion(Node):
             )
             world_point = do_transform_point(msg, transform)
             self.target_world = world_point.point
+            self.final_guided_target_world = None
             self.current_approach_dist = self.second_approach_dist
             self.compensated_target_world = None
             self.final_forward_done = False
@@ -1758,7 +1914,7 @@ class WhitePointFullMotion(Node):
                 return
 
         # Full mode: 規劃資料未就緒前，先等待，避免進入 Step 3 後反覆 No orange point
-        if not self.is_close_range_mode and self.orange_point_world is None:
+        if not self.is_close_range_mode and self.orange_point_world is None and not self.base_aligned:
             if self.panel_axis_base is not None:
                 if self.desired_yaw_world is None:
                     self.update_desired_yaw_world()
@@ -1932,33 +2088,59 @@ class WhitePointFullMotion(Node):
                 f"✓ Base_link reached orange point! Final distance: {dist_world*100:.1f}cm"
             )
             return
+
+        # 第二次選點後若已非常接近橘色點，直接進入下一階段，避免多餘的大轉向。
+        if self.second_selection_done and dist_world <= self.orange_near_skip_dist:
+            stop = Twist()
+            self.cmd_vel_pub.publish(stop)
+            self.base_aligned = True
+            if self.second_stage_skip_prealign_when_near:
+                self.second_approach_aligned = True
+                self._pre_second_align_phase = 'rotate'
+                self.set_selection_phase('moving_to_target')
+            self.get_logger().info(
+                f"✓ Near orange point in second stage ({dist_world*100:.1f}cm). Skip extra repositioning."
+            )
+            if self.second_stage_skip_prealign_when_near:
+                self.get_logger().info(
+                    "✓ Skip second pre-alignment and start final target approach directly."
+                )
+            return
         
-        # 控制策略：先對齊橘色點方向，再前進
+        # 控制策略：連續弧線前進（線速度+角速度同時輸出），避免先大轉再直走。
         twist = Twist()
-        
-        # 如果角度誤差太大，先轉向
-        if abs(angle_to_orange) > self.angle_thresh:
-            ang_cmd = max(-self.max_ang, min(self.max_ang, self.k_ang * angle_to_orange))
-            twist.angular.z = ang_cmd
-            twist.linear.x = 0.0
-            self.get_logger().debug(
-                f"Aligning to orange point: angle_error={math.degrees(angle_to_orange):.1f}°, "
-                f"dist={dist_world:.3f}m"
-            )
+
+        if dist_world <= self.orange_heading_near_dist:
+            max_heading_err = self.orange_heading_limit_near
         else:
-            # 角度對齊後，直接朝橘色點前進
-            # 速度依距離縮放，接近時自動降速
-            lin_cmd = min(self.max_lin, self.k_lin * dist_world)
-            twist.linear.x = max(0.0, lin_cmd)
-            
-            # 同時保持小幅度角度修正
-            ang_cmd = max(-self.max_ang * 0.3, min(self.max_ang * 0.3, self.k_ang * angle_to_orange))
-            twist.angular.z = ang_cmd
-            
-            self.get_logger().debug(
-                f"Moving to orange point: dist={dist_world:.3f}m, lin_cmd={lin_cmd:.3f}, "
-                f"angle_error={math.degrees(angle_to_orange):.1f}°"
-            )
+            max_heading_err = self.orange_heading_limit_far
+        if self.second_selection_done:
+            max_heading_err *= 0.8
+
+        limited_angle = max(-max_heading_err, min(max_heading_err, angle_to_orange))
+
+        # 目標在車體後方時，先以轉向為主，避免倒車造成不穩。
+        target_behind = dx < 0.0 and abs(angle_to_orange) > (math.pi / 2.0)
+        if target_behind:
+            lin_cmd = 0.0
+            ang_cmd = max(-self.max_ang, min(self.max_ang, self.k_ang * limited_angle))
+        else:
+            base_lin_cmd = min(self.max_lin, self.k_lin * max(0.0, dist_base))
+            heading_scale = max(0.1, math.cos(abs(limited_angle)))
+            lin_cmd = base_lin_cmd * heading_scale
+            ang_cmd = max(-self.max_ang, min(self.max_ang, self.k_ang * limited_angle))
+
+        if dist_world < 0.12:
+            lin_cmd = min(lin_cmd, 0.08)
+            ang_cmd = max(-0.35, min(0.35, ang_cmd))
+
+        twist.linear.x = max(0.0, lin_cmd)
+        twist.angular.z = ang_cmd
+
+        self.get_logger().debug(
+            f"Arc-to-orange: dist={dist_world:.3f}m, raw_angle={math.degrees(angle_to_orange):.1f}°, "
+            f"limited_angle={math.degrees(limited_angle):.1f}°, lin={twist.linear.x:.3f}, ang={twist.angular.z:.3f}"
+        )
         
         self.cmd_vel_pub.publish(twist)
     
@@ -2194,16 +2376,20 @@ class WhitePointFullMotion(Node):
             
             tx /= t_norm
             ty /= t_norm
+
+            tangent_offset = self.tangent_offset_distance
+            if self.second_selection_done:
+                tangent_offset = min(self.tangent_offset_distance, self.second_tangent_offset_distance)
             
-            # 橘色點 = 黃色點 - 切線方向 * 15cm（反向）
+            # 橘色點 = 黃色點 - 切線方向 * offset（反向）
             self.orange_point_world = Point()
-            self.orange_point_world.x = self.approach_world.x - tx * self.tangent_offset_distance
-            self.orange_point_world.y = self.approach_world.y - ty * self.tangent_offset_distance
+            self.orange_point_world.x = self.approach_world.x - tx * tangent_offset
+            self.orange_point_world.y = self.approach_world.y - ty * tangent_offset
             self.orange_point_world.z = self.approach_world.z
             
             self.get_logger().info(
                 f"Orange point (world): X={self.orange_point_world.x:.3f}, "
-                f"Y={self.orange_point_world.y:.3f} (offset {self.tangent_offset_distance*100:.0f}cm along reverse tangent)"
+                f"Y={self.orange_point_world.y:.3f} (offset {tangent_offset*100:.0f}cm along reverse tangent)"
             )
             return True
         except Exception as e:
@@ -2248,6 +2434,7 @@ class WhitePointFullMotion(Node):
         self.close_range_backup_start = None
         self.close_range_min_dist = float('inf')
         self.close_range_approach_start_dist = None
+        self.close_range_z_realign_attempts = 0
         self.wrist_goal_handle = None
         self.wrist_sending = False
         self.wrist_result = None
@@ -2258,6 +2445,9 @@ class WhitePointFullMotion(Node):
         self.joints_retry_not_before_ns = 0
         self.arm_goal_handle = None
         self.arm_result = None
+        self.final_guided_target_world = None
+        self.button_press_active = False
+        self.button_press_start_pos = None
         self.manual_cmd_until_ns = 0
         self.manual_twist = Twist()
         self.manual_motion_queue.clear()
@@ -2274,53 +2464,68 @@ class WhitePointFullMotion(Node):
             remaining = 5.0 - elapsed
             if remaining > 0:
                 self.get_logger().info(
-                    f"⏳ Post-task: backing up in {remaining:.1f}s...",
+                    f"⏳ Post-task: reset in {remaining:.1f}s...",
                     throttle_duration_sec=1.0
                 )
                 return
-            # 5 秒到，進入後退階段
-            self.post_task_phase = 'backing_up'
+            # 5 秒到，直接重置（暫時停用後退 10cm）
+            stop = Twist()
+            self.cmd_vel_pub.publish(stop)
+            self.post_task_phase = None
+            self.post_task_wait_start = None
             self.post_task_backup_start_pos = None
-            self.get_logger().info("⏪ Post-task backup started (target: 10cm)")
+            self._reset_all_state()
+            self.get_logger().info("✓ Post-task wait complete (no backup). Ready for next target.")
             return
 
+        # 暫時停用後退流程；保留原碼在註解中，之後可快速恢復。
+        # if self.post_task_phase == 'backing_up':
+        #     try:
+        #         tf = self.tf_buffer.lookup_transform(
+        #             'odom', 'base_link', rclpy.time.Time()
+        #         )
+        #         cur_x = tf.transform.translation.x
+        #         cur_y = tf.transform.translation.y
+        #     except Exception as e:
+        #         self.get_logger().warn(f"Post-task backup TF error: {e}")
+        #         return
+        #
+        #     if self.post_task_backup_start_pos is None:
+        #         self.post_task_backup_start_pos = (cur_x, cur_y)
+        #
+        #     sx, sy = self.post_task_backup_start_pos
+        #     backed = math.sqrt((cur_x - sx) ** 2 + (cur_y - sy) ** 2)
+        #
+        #     if backed >= 0.10:
+        #         # 停車並完全重置
+        #         stop = Twist()
+        #         self.cmd_vel_pub.publish(stop)
+        #         self.post_task_phase = None
+        #         self.post_task_wait_start = None
+        #         self.post_task_backup_start_pos = None
+        #         self._reset_all_state()
+        #         self.get_logger().info(
+        #             f"✓ Post-task backup complete ({backed*100:.1f}cm). Ready for next target."
+        #         )
+        #         return
+        #
+        #     twist = Twist()
+        #     twist.linear.x = -0.08  # 8 cm/s 後退
+        #     self.cmd_vel_pub.publish(twist)
+        #     self.get_logger().info(
+        #         f"⏪ Post-task backing up: {backed*100:.1f}/10.0cm",
+        #         throttle_duration_sec=0.5
+        #     )
+
         if self.post_task_phase == 'backing_up':
-            try:
-                tf = self.tf_buffer.lookup_transform(
-                    'odom', 'base_link', rclpy.time.Time()
-                )
-                cur_x = tf.transform.translation.x
-                cur_y = tf.transform.translation.y
-            except Exception as e:
-                self.get_logger().warn(f"Post-task backup TF error: {e}")
-                return
-
-            if self.post_task_backup_start_pos is None:
-                self.post_task_backup_start_pos = (cur_x, cur_y)
-
-            sx, sy = self.post_task_backup_start_pos
-            backed = math.sqrt((cur_x - sx) ** 2 + (cur_y - sy) ** 2)
-
-            if backed >= 0.10:
-                # 停車並完全重置
-                stop = Twist()
-                self.cmd_vel_pub.publish(stop)
-                self.post_task_phase = None
-                self.post_task_wait_start = None
-                self.post_task_backup_start_pos = None
-                self._reset_all_state()
-                self.get_logger().info(
-                    f"✓ Post-task backup complete ({backed*100:.1f}cm). Ready for next target."
-                )
-                return
-
-            twist = Twist()
-            twist.linear.x = -0.08  # 8 cm/s 後退
-            self.cmd_vel_pub.publish(twist)
-            self.get_logger().info(
-                f"⏪ Post-task backing up: {backed*100:.1f}/10.0cm",
-                throttle_duration_sec=0.5
-            )
+            # 防呆：若外部狀態仍切到 backing_up，直接重置，避免底盤後退。
+            self.get_logger().warn("Post-task backing_up phase is disabled; resetting state directly.")
+            stop = Twist()
+            self.cmd_vel_pub.publish(stop)
+            self.post_task_phase = None
+            self.post_task_wait_start = None
+            self.post_task_backup_start_pos = None
+            self._reset_all_state()
 
     def quat_to_yaw(self, x, y, z, w):
         siny_cosp = 2.0 * (w * z + x * y)
@@ -2442,14 +2647,18 @@ class WhitePointFullMotion(Node):
             return
 
         now_ns = self.get_clock().now().nanoseconds
-        min_interval_ns = int(0.8 * 1e9)  # 最快約 1.25 Hz
+        min_interval_ns = int(self.head_tracking_min_interval_sec * 1e9)
         if now_ns - self._last_head_cmd_time_ns < min_interval_ns:
             return
         
         if self._last_head_pan is not None and self._last_head_tilt is not None:
             pan_diff = abs(head_pan - self._last_head_pan)
             tilt_diff = abs(head_tilt - self._last_head_tilt)
-            if pan_diff < math.radians(5) and tilt_diff < math.radians(5):
+            # 小角度變化不重發，避免在噪聲下來回修正。
+            if (
+                pan_diff < math.radians(self.head_tracking_pan_deadband_deg)
+                and tilt_diff < math.radians(self.head_tracking_tilt_deadband_deg)
+            ):
                 return
         
         if not self.trajectory_client.wait_for_server(timeout_sec=0.1):
@@ -2604,7 +2813,10 @@ class WhitePointFullMotion(Node):
 
         # 取得目標點在 world/odom 座標系下的位置
         # 直接使用原始目標點（紅色點），不使用補償
-        target_in_world = self.target_world
+        # 末段優先使用 D405 導引目標，失敗時退回原始目標
+        target_in_world = self.get_final_guided_target_from_d405()
+        if target_in_world is None:
+            target_in_world = self.target_world
         if target_in_world is None:
             self.get_logger().warn('No target available for arm extension!')
             return False
@@ -2737,10 +2949,10 @@ class WhitePointFullMotion(Node):
             self.get_logger().info('✓ Task completed! Arm extended successfully!')
             # arm_extended 保持 True，防止 control_loop 重複執行 Step 5
             self.arm_extended = True
-            # 進入等待 5 秒後退流程
+            # 進入等待 5 秒流程（暫不後退）
             self.post_task_phase = 'waiting'
             self.post_task_wait_start = self.get_clock().now()
-            self.get_logger().info("⏳ Waiting 5 seconds before backing up 10cm...")
+            self.get_logger().info("⏳ Waiting 5 seconds before reset...")
         else:
             self.get_logger().warn(f'Arm action finished with status: {result.status}')
 
@@ -2775,12 +2987,60 @@ class WhitePointFullMotion(Node):
 
     def move_forward_to_target(self):
         """沿著法向量方向前進到目標點（或近距離直接朝向目標）"""
+
+        # 到點後的按壓行程：底盤再前進固定距離，完成後才進入伸臂。
+        if self.button_press_active:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    'odom',
+                    'base_link',
+                    rclpy.time.Time()
+                )
+                current_pos = transform.transform.translation
+            except Exception as e:
+                self.get_logger().warn(f"Failed to get pose during press-forward: {e}")
+                return
+
+            if self.button_press_start_pos is None:
+                self.button_press_start_pos = Point()
+                self.button_press_start_pos.x = current_pos.x
+                self.button_press_start_pos.y = current_pos.y
+
+            moved = math.hypot(
+                current_pos.x - self.button_press_start_pos.x,
+                current_pos.y - self.button_press_start_pos.y,
+            )
+
+            if moved >= self.button_press_forward_dist:
+                stop = Twist()
+                self.cmd_vel_pub.publish(stop)
+                self.button_press_active = False
+                self.button_press_start_pos = None
+                self.final_forward_done = True
+                self.get_logger().info(
+                    f"✅ Base press-forward complete: {moved*100:.1f}cm / {self.button_press_forward_dist*100:.1f}cm"
+                )
+                self.get_logger().info("Now adjusting lift and arm to final position...")
+                return
+
+            twist = Twist()
+            twist.linear.x = self.button_press_forward_speed
+            self.cmd_vel_pub.publish(twist)
+            self.get_logger().debug(
+                f"Press-forward: {moved*100:.1f}/{self.button_press_forward_dist*100:.1f}cm",
+                throttle_duration_sec=0.5
+            )
+            return
+
+        # 粗定位後的末段對位：優先使用 D405 閉迴路導引目標
+        target = self.get_final_guided_target_from_d405()
+        if target is None:
+            target = self.target_world
         
-        # 直接使用原始目標點（紅色點），不使用補償
-        target = self.target_world
-        
-        # 判斷是否為近距離修正模式
-        is_close_range = (self.approach_world is None)
+        # 近距離修正模式只由 is_close_range_mode 控制。
+        # 單點直達（second-stage direct）雖然會清空 approach_world，
+        # 但不應誤入 close-range backup/rotate 流程。
+        is_close_range = self.is_close_range_mode
         
         if target is None:
             self.get_logger().warn("No target available!")
@@ -2984,18 +3244,49 @@ class WhitePointFullMotion(Node):
 
                 # 若 XY 幾乎對齊但 Z 還有明顯誤差，優先重調 lift，不要在原地轉圈
                 z_error = abs(target.z - gripper_center_odom.z)
-                if dist_world_xy <= self.final_yaw_freeze_xy_thresh and z_error > 0.015:
+                if (
+                    (not self.second_selection_done)
+                    and dist_world_xy <= self.final_yaw_freeze_xy_thresh
+                    and z_error > 0.015
+                ):
+                    desired_lift = max(
+                        self.lift_min,
+                        min(self.lift_max, float(target.z - self.gripper_z_offset))
+                    )
+                    lift_delta = None
+                    if self.current_lift_pos is not None:
+                        lift_delta = abs(desired_lift - float(self.current_lift_pos))
+
+                    if self.close_range_z_realign_attempts >= self.close_range_z_realign_max_attempts:
+                        self.get_logger().warn(
+                            f"↕️ Z re-align skipped: reached max attempts ({self.close_range_z_realign_attempts}). "
+                            f"Continue final approach with current lift (z_error={z_error*100:.1f}cm).",
+                            throttle_duration_sec=1.0
+                        )
+                    elif lift_delta is not None and lift_delta < self.close_range_z_realign_lift_epsilon:
+                        self.get_logger().warn(
+                            f"↕️ Z re-align skipped: lift delta {lift_delta*100:.1f}cm < "
+                            f"{self.close_range_z_realign_lift_epsilon*100:.1f}cm. "
+                            f"Continue final approach (z_error={z_error*100:.1f}cm).",
+                            throttle_duration_sec=1.0
+                        )
+                    else:
+                        self.close_range_z_realign_attempts += 1
+                        stop = Twist()
+                        self.cmd_vel_pub.publish(stop)
+                        self.joints_moved = False
+                        self.joints_goal_handle = None
+                        self.joints_sending = False
+                        self.joints_result = None
+                        self.get_logger().info(
+                            f"↕️ XY aligned ({dist_world_xy*100:.1f}cm) but Z error is {z_error*100:.1f}cm. "
+                            f"Re-adjusting lift before continuing close-range approach "
+                            f"({self.close_range_z_realign_attempts}/{self.close_range_z_realign_max_attempts})."
+                        )
+                        return
+
                     stop = Twist()
                     self.cmd_vel_pub.publish(stop)
-                    self.joints_moved = False
-                    self.joints_goal_handle = None
-                    self.joints_sending = False
-                    self.joints_result = None
-                    self.get_logger().info(
-                        f"↕️ XY aligned ({dist_world_xy*100:.1f}cm) but Z error is {z_error*100:.1f}cm. "
-                        f"Re-adjusting lift before continuing close-range approach."
-                    )
-                    return
                 
                 # 更新最小距離追蹤
                 if center_dist_3d < self.close_range_min_dist:
@@ -3054,8 +3345,12 @@ class WhitePointFullMotion(Node):
                 if not hasattr(self, '_close_range_reach_count'):
                     self._close_range_reach_count = 0
 
-                # 第一階段用 raw center 距離，第二階段用 offset center 距離
-                check_dist_3d = dist_raw_3d if not self.raw_gripper_reached else center_dist_3d
+                # 第二次選點/單次直達模式：與第二階段一致，以 XY 對齊判定。
+                # 舊 close-range 模式則維持 3D 判定。
+                if self.second_selection_done:
+                    check_dist_3d = dist_raw_xy if not self.raw_gripper_reached else dist_world_xy
+                else:
+                    check_dist_3d = dist_raw_3d if not self.raw_gripper_reached else center_dist_3d
 
                 close_dist_ok_strict = check_dist_3d <= self.final_gripper_dist_thresh
                 close_dist_ok_relaxed = check_dist_3d <= (self.final_gripper_dist_thresh + self.final_reach_hysteresis)
@@ -3081,12 +3376,18 @@ class WhitePointFullMotion(Node):
                         twist.linear.x = 0.0
                         twist.angular.z = 0.0
                         self.cmd_vel_pub.publish(twist)
-                        self.final_forward_done = True
+                        self.button_press_active = True
+                        self.button_press_start_pos = Point()
+                        self.button_press_start_pos.x = current_pos.x
+                        self.button_press_start_pos.y = current_pos.y
                         self._close_range_retry_count = 0
                         self._close_range_reach_count = 0
                         self.get_logger().info(
                             f"✓ [Phase 2/2] Close-range adjustment complete! "
                             f"Offset center distance: {center_dist_3d*100:.1f}cm"
+                        )
+                        self.get_logger().info(
+                            f"➡️ Starting base press-forward for {self.button_press_forward_dist*100:.1f}cm"
                         )
                         return
 
@@ -3136,9 +3437,6 @@ class WhitePointFullMotion(Node):
         # ========================================
         # 完整模式：使用法向量前進，但監控距離變化
         # ========================================
-        # 使用法向量方向，但要確保法向量指向目標方向
-        normal_yaw = math.atan2(self.normal_vec_world[1], self.normal_vec_world[0])
-        
         # 第一次進入時決定是否需要翻轉，並鎖定這個決定
         if not hasattr(self, '_normal_flipped'):
             self._normal_flipped = False
@@ -3152,12 +3450,13 @@ class WhitePointFullMotion(Node):
         if self.forward_target_dist is None:
             self._normal_flipped = False
             self._min_dist_achieved = center_dist_3d
-            # 若有鎖定的法向量，使用法向量模式以確保沿牆面法線前進；否則退回直接模式
-            self._use_direct_mode = (self.normal_vec_world is None)
+            # 第二次選點後，優先用 direct mode 直達目標，避免額外側向修正造成路徑不自然。
+            prefer_direct = self.second_selection_done and self.second_stage_prefer_direct_mode
+            # 若有鎖定的法向量，第一階段可用法向量；第二階段預設直接模式。
+            self._use_direct_mode = (self.normal_vec_world is None) or prefer_direct
             if self._use_direct_mode:
-                self.get_logger().info(
-                    f"🎯 Using DIRECT mode to approach target (normal vector unavailable)"
-                )
+                reason = "second-stage smoother approach" if prefer_direct else "normal vector unavailable"
+                self.get_logger().info(f"🎯 Using DIRECT mode to approach target ({reason})")
             else:
                 self.get_logger().info(
                     f"🎯 Using NORMAL vector mode to approach target "
@@ -3276,7 +3575,10 @@ class WhitePointFullMotion(Node):
                 # 第二階段：偏移 center 也到達目標，正式停止
                 stop = Twist()
                 self.cmd_vel_pub.publish(stop)
-                self.final_forward_done = True
+                self.button_press_active = True
+                self.button_press_start_pos = Point()
+                self.button_press_start_pos.x = current_pos.x
+                self.button_press_start_pos.y = current_pos.y
                 self._final_reach_count = 0
 
                 # 計算最終精度
@@ -3298,21 +3600,36 @@ class WhitePointFullMotion(Node):
                 except:
                     pass
 
-                self.get_logger().info("Now adjusting lift and arm to final position...")
+                self.get_logger().info(
+                    f"➡️ Starting base press-forward for {self.button_press_forward_dist*100:.1f}cm"
+                )
                 return
 
         # 控制策略（完整模式）
         twist = Twist()
         
         if abs(yaw_error) > self.final_angle_allow:
-            # 完整模式：角度誤差太大，先轉向
+            # 完整模式：角度誤差大時改用弧線轉進，避免原地轉造成不自然軌跡。
+            # 只有目標明顯在車體後方時才退回原地轉，確保安全。
+            target_behind = dx_base < -0.02 and abs(yaw_error) > math.radians(80.0)
             ang_cmd = max(-self.final_max_ang, min(self.final_max_ang, self.k_ang * yaw_error))
+
+            if target_behind:
+                lin_cmd = 0.0
+            else:
+                base_lin_cmd = min(self.final_max_lin * 0.6, self.k_lin * dist_world_xy)
+                heading_scale = max(0.15, math.cos(abs(yaw_error)))
+                lin_cmd = base_lin_cmd * heading_scale
+                if dist_world_xy < 0.10:
+                    lin_cmd = min(lin_cmd, 0.04)
+
             twist.angular.z = ang_cmd
-            twist.linear.x = 0.0
+            twist.linear.x = max(0.0, lin_cmd)
             self.get_logger().debug(
-                f"Aligning ({mode_str}): yaw_error={math.degrees(yaw_error):.1f}°, "
-                f"center_dist={center_dist_3d:.3f}m, xy_dist={dist_world_xy:.3f}m, "
-                f"Y_base={dy_base*100:.1f}cm"
+                f"Arc-align ({mode_str}): yaw_error={math.degrees(yaw_error):.1f}°, "
+                f"xy_dist={dist_world_xy:.3f}m, X_base={dx_base*100:.1f}cm, "
+                f"Y_base={dy_base*100:.1f}cm, lin={twist.linear.x:.3f}, "
+                f"ang={twist.angular.z:.3f}, behind={target_behind}"
             )
         else:
             # 完整模式：角度對齊後，直線前進

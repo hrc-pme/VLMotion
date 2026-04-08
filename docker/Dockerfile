@@ -248,6 +248,7 @@ RUN OPENCV_QT_DIR="/usr/local/lib/python3.10/dist-packages/cv2/qt/plugins" \
 
 # Install additional packages for visual servoing
 RUN python3 -m pip install --no-cache-dir \
+    sophuspy \
         open3d \
         --ignore-installed \
     && python3 -m pip install --no-cache-dir --upgrade \
