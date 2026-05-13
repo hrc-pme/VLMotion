@@ -220,6 +220,16 @@ def launch_setup(context, *args, **kwargs):
         }.items()
     ))
 
+    nodes.append(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('stretch_launch'),
+                'launch',
+                'rplidar.launch.py'
+            ])
+        ])
+    ))
+
     # 同時啟動兩台相機
     add_camera_nodes(nodes, primary_camera_name, primary_cam, primary_cal)
     if secondary_camera_name != primary_camera_name:
@@ -229,8 +239,8 @@ def launch_setup(context, *args, **kwargs):
 
     nodes.append(Node(
         package='white_point_pipeline',
-        executable='white_point_gui',
-        name='white_point_gui',
+        executable='white_point_gui_unity',
+        name='white_point_gui_unity',
         output='screen',
         parameters=[{
             'color_topic': primary_color_topic,
@@ -268,19 +278,19 @@ def launch_setup(context, *args, **kwargs):
         }],
     ))
 
-    # nodes.append(Node(
-    #     package='white_point_pipeline',
-    #     executable='keyboard_nav_teleop',
-    #     name='keyboard_nav_teleop',
-    #     output='screen',
-    #     emulate_tty=True,
-    #     condition=IfCondition(LaunchConfiguration('enable_keyboard_teleop')),
-    #     parameters=[{
-    #         'block_teleop_when_autonomy_active': True,
-    #         'autonomy_phase_topic': keyboard_autonomy_phase_topic,
-    #         'autonomy_idle_phase': keyboard_autonomy_idle_phase,
-    #     }],
-    # ))
+    nodes.append(Node(
+        package='white_point_pipeline',
+        executable='keyboard_nav_teleop',
+        name='keyboard_nav_teleop',
+        output='screen',
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration('enable_keyboard_teleop')),
+        parameters=[{
+            'block_teleop_when_autonomy_active': True,
+            'autonomy_phase_topic': keyboard_autonomy_phase_topic,
+            'autonomy_idle_phase': keyboard_autonomy_idle_phase,
+        }],
+    ))
 
     nodes.append(Node(
         package='tf2_ros',

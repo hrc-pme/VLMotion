@@ -21,6 +21,7 @@ import json
 import ctypes
 import subprocess
 import argparse
+import pathlib
 
 # ── ALSA 警告壓制（必須在 pyaudio import 前）──────────────────────────────────
 _alsa_handle = None
@@ -161,6 +162,29 @@ def voice_support_status():
     if client is None:
         return False, VOICE_INIT_ERROR or "Wit client unavailable."
     return True, ""
+
+
+def split_worker_response(response: str):
+    marker = "__SNAPPED_POINTS__:"
+    if marker not in response:
+        return response, None
+    display_text, metadata = response.split(marker, 1)
+    try:
+        points = json.loads(metadata.strip())
+    except Exception:
+        points = None
+    return display_text.strip(), points
+
+
+def model_name_from_path(model_path: str) -> str:
+    path = str(model_path or "").rstrip("/")
+    if not path:
+        return ""
+    name = pathlib.PurePosixPath(path).name
+    if name.startswith("checkpoint-"):
+        parent = pathlib.PurePosixPath(path).parent.name
+        return f"{parent}_{name}"
+    return name
 
 
 def record_audio_pyaudio(duration=3, rate=16000, chunk=1024):
@@ -323,7 +347,7 @@ class LLMWorkerThread(QThread):
                 headers={"User-Agent": "White Point GUI Client"},
                 json=self.request_data,
                 stream=True,
-                timeout=30,
+                timeout=180,
             )
             full_output = ""
             for chunk in response.iter_lines(decode_unicode=False, delimiter=b"\0"):
@@ -372,23 +396,22 @@ class ROS2Thread(QThread):
 # 可點擊影像標籤
 # ══════════════════════════════════════════════════════════════════════════════
 class ImageLabel(QLabel):
-    clicked = pyqtSignal(int, int)
+    file_selection_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self.setMinimumSize(320, 240)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("border: 2px solid #ccc;")
+        self.setStyleSheet("border: 2px solid #ccc; cursor: hand;")
         self.scale_x = 1.0
         self.scale_y = 1.0
         self.offset_x = 0
         self.offset_y = 0
 
     def mousePressEvent(self, event):
+        # Always request file selection when clicked (no point selection on image)
         if event.button() == Qt.LeftButton:
-            x = int((event.x() - self.offset_x) / self.scale_x)
-            y = int((event.y() - self.offset_y) / self.scale_y)
-            self.clicked.emit(x, y)
+            self.file_selection_requested.emit()
 
     def set_image(self, cv_image):
         h, w = cv_image.shape[:2]
@@ -472,7 +495,7 @@ class WhitePointGUIStandalone(Node):
 class MainWindow(QMainWindow):
     def __init__(self, ros_node, signal_bridge,
                  controller_url="http://10.0.0.1:11000",
-                 model_path="PME033541/vla5"):
+                 model_path="PME033541/vla13"):
         super().__init__()
         self.ros_node = ros_node
         self.signal_bridge = signal_bridge
@@ -509,57 +532,26 @@ class MainWindow(QMainWindow):
         # ── 左側：影像區域 ───────────────────────────────────────────────────
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
 
-        # Open photo button row
-        photo_bar = QHBoxLayout()
-        self.open_photo_btn = QPushButton("Open Photo")
-        self.open_photo_btn.setFont(QFont("Arial", 12, QFont.Bold))
-        self.open_photo_btn.setToolTip("Select a local image file as the test image")
-        self.open_photo_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover { background-color: #e68900; }
-            QPushButton:pressed { background-color: #cc7a00; }
-        """)
-        self.photo_path_label = QLabel("( No photo loaded )")
-        self.photo_path_label.setFont(QFont("Arial", 10))
-        self.photo_path_label.setStyleSheet("color: #666; padding-left: 8px;")
-        self.photo_path_label.setWordWrap(True)
-        photo_bar.addWidget(self.open_photo_btn)
-        photo_bar.addWidget(self.photo_path_label, stretch=1)
-        left_layout.addLayout(photo_bar)
-
-        # 影像顯示
+        # 影像顯示（點擊以打開照片或選擇點）
         self.image_label = ImageLabel()
         self.image_label.setMinimumSize(400, 300)
-        left_layout.addWidget(self.image_label)
-
-        # Hint text (shown when no image is loaded)
-        self.camera_hint = QLabel(
-            "Click 'Open Photo' above to load a test image.\n"
-            "After loading, click on the image to select a pixel point.\n"
-            "Or use the text / voice input on the right to query the LLM."
+        self.image_label.setSizePolicy(
+            self.image_label.sizePolicy().horizontalPolicy(),
+            self.image_label.sizePolicy().verticalPolicy()
         )
-        self.camera_hint.setAlignment(Qt.AlignCenter)
-        self.camera_hint.setFont(QFont("Arial", 11))
-        self.camera_hint.setStyleSheet(
-            "color: #888; padding: 8px; background: #fafafa; border-radius: 4px;"
-        )
-        left_layout.addWidget(self.camera_hint)
+        left_layout.addWidget(self.image_label, stretch=1)
 
-        # 服務狀態列（已停用，LLM controller 未啟動時不顯示連線狀態）
-        # self.service_status = QLabel("Controller: Not Connected | Worker: Not Connected")
-        # self.service_status.setAlignment(Qt.AlignCenter)
-        # self.service_status.setFont(QFont("Arial", 12, QFont.Bold))
-        # self.service_status.setStyleSheet(
-        #     "padding: 8px; background-color: #f0f0f0; font-weight: bold;"
-        # )
-        # left_layout.addWidget(self.service_status)
+        # 服務狀態列（LLM 連線狀態）
+        self.service_status = QLabel("Controller: Not Connected | Worker: Not Connected")
+        self.service_status.setAlignment(Qt.AlignCenter)
+        self.service_status.setFont(QFont("Arial", 11, QFont.Bold))
+        self.service_status.setStyleSheet(
+            "padding: 8px; background-color: #f0f0f0; border-radius: 4px;"
+        )
+        left_layout.addWidget(self.service_status)
 
         main_layout.addWidget(left_widget, stretch=1)
 
@@ -641,23 +633,22 @@ class MainWindow(QMainWindow):
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
         self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
 
-        self.image_label.clicked.connect(self.on_image_clicked)
+        self.image_label.file_selection_requested.connect(self._open_photo)
         self.send_button.clicked.connect(self.send_user_input)
         self.input_field.returnPressed.connect(self.send_user_input)
         self.voice_button.clicked.connect(self.handle_voice_button)
-        self.open_photo_btn.clicked.connect(self.open_photo)
 
         self._update_voice_button_state()
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Open local photo (core new feature)
+    # Open local photo (triggered by clicking image label when no image is loaded)
     # ──────────────────────────────────────────────────────────────────────────
-    def open_photo(self):
+    def _open_photo(self):
         """Open a file dialog so the user can select a local image for testing."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Test Photo",
-            "/workspace/ros2_ws/data",
+            "/workspace/Outputs/model_inputs/data",
             "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.tif);;All Files (*)",
         )
         if not file_path:
@@ -668,15 +659,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Cannot Load", f"Cannot read image:\n{file_path}")
             return
 
-        self.camera_hint.hide()
-        self.photo_path_label.setText(os.path.basename(file_path))
-
         # Update image display
         self.update_image(img)
 
-        self.output_text.append(
-            f"<b style='color: #FF9800;'>Loaded:</b> {os.path.basename(file_path)}"
-        )
+        # self.output_text.append(
+        #     f"<b style='color: #FF9800;'>Loaded:</b> {os.path.basename(file_path)}"
+        # )
 
     # ──────────────────────────────────────────────────────────────────────────
     def update_image(self, cv_image):
@@ -689,8 +677,7 @@ class MainWindow(QMainWindow):
     def update_3d_coord(self, x: float, y: float, z: float):
         pass
 
-    def on_image_clicked(self, x: int, y: int):
-        self.confirm_and_publish_pixel(x, y, source="manual")
+
 
     def phase_to_text(self, phase: str):
         mapping = {
@@ -797,14 +784,7 @@ class MainWindow(QMainWindow):
             self.output_text.append(f"<b style='color: #F44336;'>影像轉換失敗:</b> {e}")
             return
 
-        prompt_with_instruction = text + (
-            " Your answer should be formatted as a list of tuples, "
-            "i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the "
-            "x and y coordinates of a point satisfying the conditions above. "
-            "The coordinates should be between 0 and 1, indicating the "
-            "normalized pixel locations of the points in the image."
-        )
-        self.send_to_llm(prompt_with_instruction, image)
+        self.send_to_llm(text, image)
 
     # ──────────────────────────────────────────────────────────────────────────
     def send_to_llm(self, text: str, image: PILImage.Image):
@@ -825,14 +805,14 @@ class MainWindow(QMainWindow):
             self.llm_worker.controller_connected.connect(self.on_controller_connected)
             self.llm_worker.worker_processing.connect(self.on_worker_processing)
 
-            # self.service_status.setText("Controller: Connecting... | Worker: Waiting...")
+            self.service_status.setText("Controller: Connecting... | Worker: Waiting...")
 
             self.conversation_state = default_conversation.copy()
 
             if '<image>' not in text:
                 text = '<image>\n' + text
 
-            content = (text, image, 'Pad')
+            content = (text, image, 'Original')
             self.conversation_state.append_message(self.conversation_state.roles[0], content)
             self.conversation_state.append_message(self.conversation_state.roles[1], None)
 
@@ -849,11 +829,12 @@ class MainWindow(QMainWindow):
             pil_images, images, transforms = self.conversation_state.get_images()
 
             request_data = {
-                'model': 'vla5',
+                'model': model_name_from_path(self.model_path),
                 'prompt': prompt,
-                'temperature': 1.0,
-                'top_p': 0.7,
-                'max_new_tokens': 512,
+                'temperature': 0,
+                'top_p': 1.0,
+                'max_new_tokens': 256,
+                'use_cache': False,
                 'stop': (
                     self.conversation_state.sep
                     if self.conversation_state.sep_style in [
@@ -873,64 +854,105 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             self.output_text.append(f"<b style='color: #F44336;'>Error:</b> {str(e)}")
-            # self.service_status.setText("Controller: Error | Worker: Error")
+            self.service_status.setText("Controller: Error | Worker: Error")
 
     # ──────────────────────────────────────────────────────────────────────────
     def handle_llm_response(self, response: str):
-        vectors = find_vectors(response)
+        display_response, snapped_points = split_worker_response(response)
+        vectors = snapped_points if snapped_points else find_vectors(display_response)
         vectors_2d = [vec for vec in vectors if len(vec) == 2]
 
         if vectors_2d and self.current_image is not None:
             h, w = self.current_image.shape[:2]
             self.llm_points = []
             pixel_points = []
+            norm_points = []
             for x, y in vectors_2d:
+                x = float(x)
+                y = float(y)
                 if isinstance(x, float) and x <= 1:
                     px, py = int(x * w), int(y * h)
+                    norm_points.append((x, y))
                 else:
                     px, py = int(x), int(y)
+                    norm_points.append(None)
                 self.llm_points.append((px, py))
                 pixel_points.append((px, py))
 
             # 顯示 LLM 解析出的點及標註圖片
-            point_info = ", ".join([f"({px}, {py})" for px, py in pixel_points])
+            if any(point is not None for point in norm_points):
+                point_info = display_response.replace('\n', ' ').strip()
+            else:
+                point_info = ", ".join([f"({px}, {py})" for px, py in pixel_points])
             self.output_text.append(
                 f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
             )
             self.append_point_preview(pixel_points)
 
-            # 若只有一個點，詢問是否確認
+            # 單點直接用，多點在 pixel 階段選最右下角
             if len(self.llm_points) == 1:
                 px, py = self.llm_points[0]
                 self.confirm_and_publish_pixel(int(px), int(py), source="llm")
+            elif len(self.llm_points) > 1:
+                best_px, best_py = self._select_best_pixel(self.llm_points)
+                self.confirm_and_publish_pixel(int(best_px), int(best_py), source="llm")
         else:
-            clean = response.replace('\n', ' ').strip()
+            clean = display_response.replace('\n', ' ').strip()
             self.output_text.append(
                 f"<b style='color: #2196F3;'>LLM:</b> {clean}"
             )
 
+    def _select_best_pixel(self, pixel_points):
+        """
+        直接在旋轉後影像座標中選點，依據：
+          1. px + py 最大（最靠右下）
+          2. py 最大（若總和相同，偏下優先）
+          3. px 最大（若仍相同，偏右優先）
+        """
+        if not pixel_points:
+            self.ros_node.get_logger().warn('select_best_pixel: no candidates')
+            return (0, 0)
+
+        best = max(
+            pixel_points,
+            key=lambda p: (float(p[0]) + float(p[1]), float(p[1]), float(p[0])),
+        )
+        self.ros_node.get_logger().info(
+            f'select_best_pixel: best=({best[0]:.0f},{best[1]:.0f}) '
+            f'pixel_sum={float(best[0]) + float(best[1]):.0f} '
+            f'from {len(pixel_points)} candidates'
+        )
+        return best
+
     def on_controller_connected(self, worker_addr: str):
-        # self.service_status.setText(f"Controller: ✓ Connected | Worker: {worker_addr}")
-        pass
+        self.service_status.setText(f"Controller: ✓ Connected | Worker: {worker_addr}")
+        self.service_status.setStyleSheet(
+            "padding: 8px; background-color: #4CAF50; color: white; border-radius: 4px; font-weight: bold;"
+        )
 
     def on_worker_processing(self):
-        # current = self.service_status.text()
-        # if "Worker:" in current:
-        #     parts = current.split("|")
-        #     self.service_status.setText(f"{parts[0]}| Worker: Processing...")
-        pass
+        current = self.service_status.text()
+        if "Worker:" in current:
+            parts = current.split("|")
+            self.service_status.setText(f"{parts[0]}| Worker: ⏳ Processing...")
 
     def handle_llm_error(self, error: str):
         self.output_text.append(f"<b style='color: #F44336;'>LLM Error:</b> {error}")
-        # self.service_status.setText("Controller: ✗ Error | Worker: ✗ Error")
+        self.service_status.setText("Controller: ✗ Error | Worker: ✗ Error")
+        self.service_status.setStyleSheet(
+            "padding: 8px; background-color: #F44336; color: white; border-radius: 4px; font-weight: bold;"
+        )
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")
 
     def llm_request_finished(self):
-        # current = self.service_status.text()
-        # if "Controller:" in current:
-        #     parts = current.split("|")
-        #     self.service_status.setText(f"{parts[0]}| Worker: ✓ Done")
+        current = self.service_status.text()
+        if "Controller:" in current:
+            parts = current.split("|")
+            self.service_status.setText(f"{parts[0]}| Worker: ✓ Done")
+            self.service_status.setStyleSheet(
+                "padding: 8px; background-color: #4CAF50; color: white; border-radius: 4px; font-weight: bold;"
+            )
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")
 
@@ -981,35 +1003,46 @@ class MainWindow(QMainWindow):
 
     # ── 服務狀態檢查 ──────────────────────────────────────────────────────────
     def check_service_status(self):
-        # LLM controller 連線檢查已停用（避免 Connection refused 錯誤）
-        # try:
-        #     ret = requests.post(
-        #         self.controller_url + "/list_models", json={}, timeout=2
-        #     )
-        #     if ret.status_code == 200:
-        #         models = ret.json().get("models", [])
-        #         if models:
-        #             self.service_status.setText(
-        #                 f"Controller: ✓ Connected | Worker: ✓ Ready ({len(models)} models)"
-        #             )
-        #             self.service_status.setStyleSheet(
-        #                 "padding: 5px; background-color: #4CAF50; color: white; font-weight: bold;"
-        #             )
-        #         else:
-        #             self.service_status.setText(
-        #                 "Controller: ✓ Connected | Worker: ⏳ Loading..."
-        #             )
-        #             QTimer.singleShot(10000, self.check_service_status)
-        #     else:
-        #         self.service_status.setText(
-        #             "Controller: ✓ Connected | Worker: ✗ Error"
-        #         )
-        # except Exception as e:
-        #     self.service_status.setText(
-        #         f"Controller: ✗ Cannot Connect ({self.controller_url})"
-        #     )
-        #     QTimer.singleShot(5000, self.check_service_status)
-        pass
+        """Periodically check LLM controller connection status."""
+        try:
+            ret = requests.post(
+                self.controller_url + "/list_models", json={}, timeout=2
+            )
+            if ret.status_code == 200:
+                models = ret.json().get("models", [])
+                if models:
+                    self.service_status.setText(
+                        f"Controller: ✓ Connected | Worker: ✓ Ready ({len(models)} models)"
+                    )
+                    self.service_status.setStyleSheet(
+                        "padding: 8px; background-color: #4CAF50; color: white; border-radius: 4px; font-weight: bold;"
+                    )
+                    # Check again in 10 seconds
+                    QTimer.singleShot(10000, self.check_service_status)
+                else:
+                    self.service_status.setText(
+                        "Controller: ✓ Connected | Worker: ⏳ Loading..."
+                    )
+                    self.service_status.setStyleSheet(
+                        "padding: 8px; background-color: #FF9800; color: white; border-radius: 4px; font-weight: bold;"
+                    )
+                    QTimer.singleShot(10000, self.check_service_status)
+            else:
+                self.service_status.setText(
+                    "Controller: ✓ Connected | Worker: ✗ Error"
+                )
+                self.service_status.setStyleSheet(
+                    "padding: 8px; background-color: #F44336; color: white; border-radius: 4px; font-weight: bold;"
+                )
+                QTimer.singleShot(5000, self.check_service_status)
+        except Exception as e:
+            self.service_status.setText(
+                f"Controller: ✗ Cannot Connect ({self.controller_url})"
+            )
+            self.service_status.setStyleSheet(
+                "padding: 8px; background-color: #F44336; color: white; border-radius: 4px; font-weight: bold;"
+            )
+            QTimer.singleShot(5000, self.check_service_status)
 
     def closeEvent(self, event):
         self.ros_node.get_logger().info("Shutting down standalone GUI...")
@@ -1025,7 +1058,7 @@ def main(args=None):
     )
     parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
                         help="LLM controller URL")
-    parser.add_argument("--model-path", type=str, default="PME033541/vla5",
+    parser.add_argument("--model-path", type=str, default="PME033541/vla13",
                         help="Model path")
     parser.add_argument("--ros-args", nargs=argparse.REMAINDER, help="ROS arguments")
 

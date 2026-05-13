@@ -32,6 +32,7 @@ services:
       - ../ros2_ws:/workspace/ros2_ws
       - ../Script:/workspace/Script
       - ../Outputs:/workspace/Outputs
+      - ../maps:/workspace/maps
       # Mount environment script so changes reflect without rebuilding image
       - ../environment.sh:/workspace/environment.sh:ro
       # Mount wit token file

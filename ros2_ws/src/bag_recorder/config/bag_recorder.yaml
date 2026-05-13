@@ -2,8 +2,8 @@ allow_all: false
 
 topics:
   - /tf_static
-  - /camera/camera/color/image_raw/compressed
-  - /camera/camera/depth/image_rect_raw/compressedDepth
+  - /d435i/color/image_raw/compressed
+  - /d435i/depth/image_rect_raw/compressedDepth
 
 exclude_topics:
   - ^/rosout.*$

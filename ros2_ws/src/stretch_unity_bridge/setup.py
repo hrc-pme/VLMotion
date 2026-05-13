@@ -1,8 +1,6 @@
-from glob import glob
-
 from setuptools import find_packages, setup
 
-package_name = "stretch_launch"
+package_name = "stretch_unity_bridge"
 
 setup(
     name=package_name,
@@ -11,8 +9,6 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/launch", glob("launch/*.py")),
-        ("share/" + package_name + "/config", glob("config/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -22,6 +18,10 @@ setup(
     license="TODO: License declaration",
     tests_require=["pytest"],
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            "stretch_unity_bridge_joint_states = stretch_unity_bridge.stretch_unity_bridge_joint_states:main",
+            "stretch_unity_bridge_posestamped = stretch_unity_bridge.stretch_unity_bridge_posestamped:main",
+            "tf_to_pose = stretch_unity_bridge.tf_to_pose:main",
+        ],
     },
 )

@@ -220,6 +220,16 @@ def launch_setup(context, *args, **kwargs):
         }.items()
     ))
 
+    nodes.append(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('stretch_launch'),
+                'launch',
+                'rplidar.launch.py'
+            ])
+        ])
+    ))
+
     # 同時啟動兩台相機
     add_camera_nodes(nodes, primary_camera_name, primary_cam, primary_cal)
     if secondary_camera_name != primary_camera_name:
@@ -227,46 +237,46 @@ def launch_setup(context, *args, **kwargs):
     else:
         print('[white_point_pipeline_dual] 注意：主次相機相同，僅啟動一台。')
 
-    nodes.append(Node(
-        package='white_point_pipeline',
-        executable='white_point_gui',
-        name='white_point_gui',
-        output='screen',
-        parameters=[{
-            'color_topic': primary_color_topic,
-            'depth_topic': primary_depth_topic,
-            'camera_info_topic': primary_camera_info_topic,
-            'camera_frame': primary_optical_frame,
-        }],
-        arguments=[
-            '--controller-url', controller_url,
-            '--model-path', model_path,
-        ],
-    ))
+    # nodes.append(Node(
+    #     package='white_point_pipeline',
+    #     executable='white_point_gui_unity',
+    #     name='white_point_gui_unity',
+    #     output='screen',
+    #     parameters=[{
+    #         'color_topic': primary_color_topic,
+    #         'depth_topic': primary_depth_topic,
+    #         'camera_info_topic': primary_camera_info_topic,
+    #         'camera_frame': primary_optical_frame,
+    #     }],
+    #     arguments=[
+    #         '--controller-url', controller_url,
+    #         '--model-path', model_path,
+    #     ],
+    # ))
 
-    nodes.append(Node(
-        package='white_point_pipeline',
-        executable='white_point_to_3d',
-        name='white_point_to_3d',
-        output='screen',
-        parameters=[{
-            'depth_topic': primary_depth_topic,
-            'camera_info_topic': primary_camera_info_topic,
-            'camera_frame': primary_optical_frame,
-        }],
-    ))
+    # nodes.append(Node(
+    #     package='white_point_pipeline',
+    #     executable='white_point_to_3d',
+    #     name='white_point_to_3d',
+    #     output='screen',
+    #     parameters=[{
+    #         'depth_topic': primary_depth_topic,
+    #         'camera_info_topic': primary_camera_info_topic,
+    #         'camera_frame': primary_optical_frame,
+    #     }],
+    # ))
 
-    nodes.append(Node(
-        package='white_point_pipeline',
-        executable='white_point_full_motion',
-        name='white_point_full_motion',
-        output='screen',
-        parameters=[{
-            'depth_topic': secondary_depth_topic,
-            'camera_info_topic': secondary_camera_info_topic,
-            'camera_frame': secondary_optical_frame,
-        }],
-    ))
+    # nodes.append(Node(
+    #     package='white_point_pipeline',
+    #     executable='white_point_full_motion',
+    #     name='white_point_full_motion',
+    #     output='screen',
+    #     parameters=[{
+    #         'depth_topic': secondary_depth_topic,
+    #         'camera_info_topic': secondary_camera_info_topic,
+    #         'camera_frame': secondary_optical_frame,
+    #     }],
+    # ))
 
     # nodes.append(Node(
     #     package='white_point_pipeline',

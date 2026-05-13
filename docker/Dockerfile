@@ -178,6 +178,76 @@ RUN apt-get update && \
         libeigen3-dev libpcl-dev libboost-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Hotfix rosbridge cbor-raw/raw subscription mismatch that can surface as:
+# AttributeError: 'bytes' object has no attribute 'get_fields_and_field_types'
+# Keep cbor-raw protocol support, but split shared subscribers by (topic, raw).
+RUN python3 - <<'PY'
+from pathlib import Path
+
+p = Path("/opt/ros/humble/local/lib/python3.10/dist-packages/rosbridge_library/internal/subscribers.py")
+s = p.read_text()
+
+old_decl = '        self._subscribers: dict[str, MultiSubscriber] = {}\n'
+new_decl = '        self._subscribers: dict[tuple[str, bool], MultiSubscriber] = {}\n'
+
+old_subscribe = (
+    '            if topic not in self._subscribers:\n'
+    '                self._subscribers[topic] = MultiSubscriber(\n'
+    '                    topic, client_id, callback, node_handle, msg_type=msg_type, raw=raw\n'
+    '                )\n'
+    '            else:\n'
+    '                self._subscribers[topic].subscribe(client_id, callback)\n'
+    '\n'
+    '            if msg_type is not None and not raw:\n'
+    '                self._subscribers[topic].verify_type(msg_type)\n'
+)
+new_subscribe = (
+    '            key = (topic, raw)\n'
+    '            if key not in self._subscribers:\n'
+    '                self._subscribers[key] = MultiSubscriber(\n'
+    '                    topic, client_id, callback, node_handle, msg_type=msg_type, raw=raw\n'
+    '                )\n'
+    '            else:\n'
+    '                self._subscribers[key].subscribe(client_id, callback)\n'
+    '\n'
+    '            if msg_type is not None and not raw:\n'
+    '                self._subscribers[key].verify_type(msg_type)\n'
+)
+
+old_unsubscribe = (
+    '            if topic not in self._subscribers:\n'
+    '                return\n'
+    '\n'
+    '            self._subscribers[topic].unsubscribe(client_id)\n'
+    '\n'
+    '            if not self._subscribers[topic].has_subscribers():\n'
+    '                self._subscribers[topic].unregister()\n'
+    '                del self._subscribers[topic]\n'
+)
+new_unsubscribe = (
+    '            matching_keys = [k for k in self._subscribers.keys() if k[0] == topic]\n'
+    '            if not matching_keys:\n'
+    '                return\n'
+    '\n'
+    '            for key in matching_keys:\n'
+    '                self._subscribers[key].unsubscribe(client_id)\n'
+    '\n'
+    '            empty_keys = [k for k in matching_keys if not self._subscribers[k].has_subscribers()]\n'
+    '            for key in empty_keys:\n'
+    '                self._subscribers[key].unregister()\n'
+    '                del self._subscribers[key]\n'
+)
+
+if old_decl in s:
+    s = s.replace(old_decl, new_decl, 1)
+if old_subscribe in s:
+    s = s.replace(old_subscribe, new_subscribe, 1)
+if old_unsubscribe in s:
+    s = s.replace(old_unsubscribe, new_unsubscribe, 1)
+
+p.write_text(s)
+PY
+
 # Initialize rosdep and setup colcon
 RUN rosdep init || true \
     && rosdep update --rosdistro $ROS_DISTRO \
@@ -229,7 +299,7 @@ RUN PIP_CONSTRAINT="" python3 -m pip install --no-cache-dir --no-warn-script-loc
 # Install additional Python packages
 RUN python3 -m pip install --no-cache-dir \
         # Audio and ML
-        soundfile transformers accelerate sentencepiece protobuf pyaudio==0.2.14 \
+        soundfile transformers==4.56.1 accelerate sentencepiece protobuf pyaudio==0.2.14 \
         # Computer vision
         opencv-contrib-python==4.8.1.78 pyrealsense2 \
         # Utilities

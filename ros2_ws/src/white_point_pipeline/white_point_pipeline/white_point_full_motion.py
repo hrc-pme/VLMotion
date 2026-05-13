@@ -110,6 +110,10 @@ class WhitePointFullMotion(Node):
             'medium': {'translate': 0.06, 'rad': 12.0 * self.rad_per_deg},
             'big': {'translate': 0.12, 'rad': 24.0 * self.rad_per_deg},
         }
+        self.manual_default_forward_dist = 0.50  # go forward（未指定距離）預設前進 50cm
+        self.manual_default_back_dist = 0.50     # go back（未指定距離）預設後退 50cm
+        self.manual_default_left_rad = 12.0 * self.rad_per_deg   # turn left（未指定角度）預設 12 度
+        self.manual_default_right_rad = 12.0 * self.rad_per_deg  # turn right（未指定角度）預設 12 度
         self.manual_lin_speed = 0.12
         self.manual_ang_speed = 0.45
         self.manual_cmd_until_ns = 0
@@ -1662,17 +1666,19 @@ class WhitePointFullMotion(Node):
 
             distance = self._extract_distance_m(clause)
             angle = self._extract_angle_rad(clause)
-            cfg = self.manual_step_cfg[self.manual_step_size]
 
             if has_forward:
-                commands.append(('forward', distance if distance is not None else cfg['translate']))
+                default_forward = max(0.0, float(self.manual_default_forward_dist))
+                commands.append(('forward', distance if distance is not None else default_forward))
             if has_back:
-                dist = distance if distance is not None else cfg['translate']
+                dist = distance if distance is not None else max(0.0, float(self.manual_default_back_dist))
                 commands.append(('back', dist))
             if has_left:
-                commands.append(('left', angle if angle is not None else cfg['rad']))
+                default_left = abs(float(self.manual_default_left_rad))
+                commands.append(('left', angle if angle is not None else default_left))
             if has_right:
-                ang = angle if angle is not None else cfg['rad']
+                default_right = abs(float(self.manual_default_right_rad))
+                ang = angle if angle is not None else default_right
                 commands.append(('right', ang))
 
         return commands

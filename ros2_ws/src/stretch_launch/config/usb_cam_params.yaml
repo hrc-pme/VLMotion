@@ -1,0 +1,21 @@
+/**:
+    ros__parameters:
+      video_device: "/dev/hello-nav-head-camera"
+      framerate: 30.0
+      io_method: "mmap"
+      frame_id: "camera"
+      pixel_format: "mjpeg2rgb"
+      av_device_format: "YUV422P"
+      image_width: 320
+      image_height: 240
+      brightness: 32
+      contrast: 32
+      saturation: 64
+      sharpness: 0
+      gain: 0
+      auto_white_balance: false
+      white_balance: 4300
+      autoexposure: true
+      exposure: 100
+      autofocus: false
+      focus: -1

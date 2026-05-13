@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
 """
-White Point Pipeline Launch 檔
-======================================
-在下方修改 CAMERA 即可切換相機，所有 topic、frame、TF 自動跟著變。
-相機配置存在 config/cameras.yaml。
+White Point Direct Pipeline Launch
+==================================
+This launch file mirrors white_point_pipeline.launch.py, but starts the
+simpler direct motion controller instead of white_point_full_motion.
+
+It does not modify or import white_point_pipeline.launch.py.
 """
 
-# ╔══════════════════════════════════════════╗
-# ║  要換相機？只改這一行！  'd415' / 'd435i' ║
-# ╚══════════════════════════════════════════╝
+# Change only this line to switch cameras: 'd415' / 'd435i'
 CAMERA = 'd435i'
+
+import os
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from ament_index_python.packages import get_package_share_directory
-import yaml, os
 
-
-# ─────────────────────────────────────────────
-# 工具函數
-# ─────────────────────────────────────────────
 
 def load_camera_config(camera_name):
-    """從 config/cameras.yaml 載入指定相機的配置"""
     pkg_dir = get_package_share_directory('white_point_pipeline')
     config_path = os.path.join(pkg_dir, 'config', 'cameras.yaml')
 
@@ -36,14 +34,13 @@ def load_camera_config(camera_name):
     if camera_name not in all_cameras:
         available = ', '.join(all_cameras.keys())
         raise ValueError(
-            f"未知的相機 '{camera_name}'。可用選項: {available}\n"
-            f"配置檔: {config_path}"
+            f"Unknown camera '{camera_name}'. Available options: {available}\n"
+            f"Config file: {config_path}"
         )
     return all_cameras[camera_name]
 
 
 def load_calibration_defaults(camera_name):
-    """從 ~/.config/camera_tf_calibration/ 載入校準默認值"""
     defaults = {
         'x': '0.0', 'y': '0.0', 'z': '0.0',
         'roll': '0.0', 'pitch': '0.0', 'yaw': '0.0',
@@ -67,18 +64,14 @@ def load_calibration_defaults(camera_name):
             defaults['roll'] = str(config.get('roll_rad', 0.0))
             defaults['pitch'] = str(config.get('pitch_rad', 0.0))
             defaults['yaw'] = str(config.get('yaw_rad', 0.0))
-            print(f'[INFO] 已載入 {camera_name} 校準配置: {calibration_file}')
-            print(f'       位移: X={defaults["x"]}m Y={defaults["y"]}m Z={defaults["z"]}m')
-            print(f'       旋轉: R={defaults["roll"]} P={defaults["pitch"]} Y={defaults["yaw"]} (rad)')
-        except Exception as e:
-            print(f'[WARN] 無法載入校準配置: {e}')
+            print(f'[INFO] Loaded {camera_name} calibration: {calibration_file}')
+            print(f'       translation: X={defaults["x"]}m Y={defaults["y"]}m Z={defaults["z"]}m')
+            print(f'       rotation: R={defaults["roll"]} P={defaults["pitch"]} Y={defaults["yaw"]} rad')
+        except Exception as exc:
+            print(f'[WARN] Failed to load calibration config: {exc}')
 
     return defaults
 
-
-# ─────────────────────────────────────────────
-# OpaqueFunction：根據 camera 參數動態產生節點
-# ─────────────────────────────────────────────
 
 def launch_setup(context, *args, **kwargs):
     camera_name = CAMERA
@@ -89,50 +82,45 @@ def launch_setup(context, *args, **kwargs):
     cam = load_camera_config(camera_name)
     cal = load_calibration_defaults(camera_name)
 
-    prefix = cam['topic_prefix']          # e.g. '/d415'
+    prefix = cam['topic_prefix']
     serial = cam['serial_no']
     optical_frame = cam['color_optical_frame']
     link_name = cam['link_name']
     link_adjusted = cam['link_adjusted_name']
 
-    # 組合 topic 名稱
     use_compressed = str(use_compressed_color).lower() in ('1', 'true', 'yes', 'on')
     color_topic = f'{prefix}/color/image_raw/compressed' if use_compressed else f'{prefix}/color/image_raw'
     depth_topic = f'{prefix}/aligned_depth_to_color/image_raw'
     camera_info_topic = f'{prefix}/color/camera_info'
 
-    print(f'[white_point_pipeline] 使用相機: {camera_name}')
+    print(f'[white_point_direct_pipeline] camera: {camera_name}')
     print(f'  color topic:  {color_topic}')
     print(f'  depth topic:  {depth_topic}')
     print(f'  camera frame: {optical_frame}')
+    print('  motion node:  white_point_pipeline.white_point_direct_motion')
 
     nodes = []
-   # -------------------------
-   #Stretch Driver ros2 launch stretch_core stretch_driver.launch.py mode:=navigation broadcast_odom_tf:=True
-   # -------------------------
+
     nodes.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
                 FindPackageShare('stretch_core'),
                 'launch',
-                'stretch_driver.launch.py'
+                'stretch_driver.launch.py',
             ])
         ]),
         launch_arguments={
             'mode': LaunchConfiguration('mode'),
             'broadcast_odom_tf': 'True',
-        }.items()
+        }.items(),
     ))
 
-    # -------------------------
-    # Optional ReSpeaker + speech_to_text
-    # -------------------------
     nodes.append(IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
                 FindPackageShare('respeaker_ros2'),
                 'launch',
-                'respeaker.launch.py'
+                'respeaker.launch.py',
             ])
         ]),
         condition=IfCondition(LaunchConfiguration('enable_respeaker')),
@@ -140,10 +128,9 @@ def launch_setup(context, *args, **kwargs):
             'language': LaunchConfiguration('speech_language'),
             'self_cancellation': LaunchConfiguration('speech_self_cancellation'),
             'launch_soundplay': 'True',
-        }.items()
+        }.items(),
     ))
 
-    # ── 1. 相機 TF 連接器 ──
     nodes.append(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -156,7 +143,6 @@ def launch_setup(context, *args, **kwargs):
         ],
     ))
 
-    # ── 2. 相機 TF 調整器 ──
     nodes.append(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -169,7 +155,6 @@ def launch_setup(context, *args, **kwargs):
         ],
     ))
 
-    # ── 3. RealSense 相機節點 ──
     nodes.append(Node(
         package='realsense2_camera',
         executable='realsense2_camera_node',
@@ -195,7 +180,6 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     ))
 
-    # ── 4. White Point GUI ──
     nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_gui',
@@ -213,7 +197,6 @@ def launch_setup(context, *args, **kwargs):
         ],
     ))
 
-    # ── 5. Pixel → TF → 3D ──
     nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_to_3d',
@@ -226,20 +209,18 @@ def launch_setup(context, *args, **kwargs):
         }],
     ))
 
-    # ── 6. Full Motion Controller ──
-    nodes.append(Node(
-        package='white_point_pipeline',
-        executable='white_point_full_motion',
-        name='white_point_full_motion',
+    nodes.append(ExecuteProcess(
+        cmd=[
+            'python3',
+            '-m',
+            'white_point_pipeline.white_point_direct_motion',
+            '--ros-args',
+            '-r',
+            '__node:=white_point_direct_motion',
+        ],
         output='screen',
-        parameters=[{
-            'depth_topic': depth_topic,
-            'camera_info_topic': camera_info_topic,
-            'camera_frame': optical_frame,
-        }],
     ))
 
-    # ── 7. map -> odom 靜態 TF（身份變換）──
     nodes.append(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -252,20 +233,15 @@ def launch_setup(context, *args, **kwargs):
             '--pitch', '0',
             '--yaw', '0',
             '--frame-id', 'map',
-            '--child-frame-id', 'odom'
-        ]
+            '--child-frame-id', 'odom',
+        ],
     ))
 
     return nodes
 
 
-# ─────────────────────────────────────────────
-# Launch Description
-# ─────────────────────────────────────────────
-
 def generate_launch_description():
     return LaunchDescription([
-        # === Launch 參數 ===
         DeclareLaunchArgument(
             'mode',
             default_value='navigation',
@@ -301,7 +277,5 @@ def generate_launch_description():
             default_value='true',
             description='Pause speech recognition while sound_play is speaking',
         ),
-
-        # === 動態產生相機 + pipeline 節點 ===
         OpaqueFunction(function=launch_setup),
     ])

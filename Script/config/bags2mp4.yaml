@@ -1,8 +1,8 @@
 jobs:
   - input_paths:                      # Paths to bag folders
-      - "/workspace/Outputs/rosbags/test/0006"
+      - "/workspace/Outputs/rosbags/test/0013"
     output_root: "/workspace/Outputs/mp4/test"       # Output MP4 folder
-    topic: "/camera/camera/color/image_raw/compressed"        # Image topic   # Omit → auto-pick if only one; error if multiple
+    topic: "/d435i/color/image_raw/compressed"        # Image topic   # Omit → auto-pick if only one; error if multiple
     fps:                               # Frames per second    # Omit → auto infer from timestamps
     recursive: true                    # Scan subfolders      # Omit → default true
     overlay_timestamp: false           # Show time overlay    # Omit → default false

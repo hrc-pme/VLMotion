@@ -334,17 +334,17 @@ class ServerProcess:
     def __init__(self):
         self.controller_process = None
         self.model_worker_process = None
-        self.controller_url = "http://10.0.0.30:11000"
+        self.controller_url = "http://10.0.0.1:11000"
 
     def start_controller(self, host="0.0.0.0", port=11000):
         """啟動 Controller"""
         cmd = [sys.executable, "-m", "point.serve.controller", "--host", host, "--port", str(port)]
         print(f"Starting controller: {' '.join(cmd)}")
         self.controller_process = subprocess.Popen(cmd)
-        self.controller_url = f"http://{('10.0.0.30' if host in ['0.0.0.0', '::'] else host)}:{port}"
+        self.controller_url = f"http://{('10.0.0.1' if host in ['0.0.0.0', '::'] else host)}:{port}"
 
-    def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.30:11000",
-                           port=22000, worker_url="http://10.0.0.30:22000",
+    def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
+                           port=22000, worker_url="http://10.0.0.1:22000",
                            model_path="PME033541/vla13", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
@@ -378,7 +378,7 @@ class LLMWorkerThread(QThread):
     controller_connected = pyqtSignal(str)  # 發送 worker 地址
     worker_processing = pyqtSignal()  # Worker 開始處理
     
-    def __init__(self, controller_url="http://10.0.0.30:11000"):
+    def __init__(self, controller_url="http://10.0.0.1:11000"):
         super().__init__()
         self.controller_url = controller_url
         self.request_data = None
@@ -444,6 +444,7 @@ class ROSSignalBridge(QObject):
     point3d_signal = pyqtSignal(float, float, float)
     selection_phase_signal = pyqtSignal(str)
     speech_text_signal = pyqtSignal(str)
+    voice_input_signal = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
@@ -570,6 +571,14 @@ class WhitePointGUI(Node):
         # 發布使用者輸入
         self.user_input_pub = self.create_publisher(String, '/user_input', 10)
 
+        # 訂閱 Unity 文字輸入
+        self.voice_input_sub = self.create_subscription(
+            String,
+            '/voice_input',
+            self.voice_input_callback,
+            10
+        )
+
         # 發布開始監聽訊號（遠端麥克風節點）
         self.start_listen_pub = self.create_publisher(String, '/start_listen', 10)
 
@@ -664,6 +673,12 @@ class WhitePointGUI(Node):
         if text:
             self.signal_bridge.speech_text_signal.emit(text)
 
+    def voice_input_callback(self, msg: String):
+        """接收 /voice_input 文字並轉發到 Qt"""
+        text = (msg.data or '').strip()
+        if text:
+            self.signal_bridge.voice_input_signal.emit(text)
+
     def publish_pixel(self, x: int, y: int):
         """發布點擊的像素座標"""
         self.last_click = (x, y)
@@ -718,7 +733,7 @@ class WhitePointGUI(Node):
 
 class MainWindow(QMainWindow):
     """主視窗"""
-    def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.30:11000", 
+    def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.1:11000", 
                  model_path="PME033541/vla13"):
         super().__init__()
         self.ros_node = ros_node
@@ -899,6 +914,7 @@ class MainWindow(QMainWindow):
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
         self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
         self.signal_bridge.speech_text_signal.connect(self.on_ros_speech_text)
+        self.signal_bridge.voice_input_signal.connect(self.on_voice_input_received)
         
         # Qt 信號
         self.image_label.clicked.connect(self.on_image_clicked)
@@ -1068,6 +1084,21 @@ class MainWindow(QMainWindow):
         if not text:
             return
 
+        # 清空輸入欄位
+        self.input_field.clear()
+
+        self._handle_user_text(text, publish_to_user_input=True)
+
+    def on_voice_input_received(self, text: str):
+        """處理 Unity 送到 /voice_input 的文字。"""
+        self._handle_user_text(text, publish_to_user_input=False)
+
+    def _handle_user_text(self, text: str, publish_to_user_input: bool):
+        """統一處理本地輸入與 /voice_input。"""
+        text = (text or '').strip()
+        if not text:
+            return
+
         normalized_text = text.lower().strip()
         normalized_text = re.sub(r"[\.,!?，。！？]", " ", normalized_text)
         normalized_text = " ".join(normalized_text.split())
@@ -1091,12 +1122,10 @@ class MainWindow(QMainWindow):
         self.output_text.verticalScrollBar().setValue(
             self.output_text.verticalScrollBar().maximum()
         )
-        
-        # 發布到 ROS2
-        self.ros_node.publish_user_input(text)
-        
-        # 清空輸入欄位
-        self.input_field.clear()
+
+        # 發布到 /user_input（與按下 Send 的原始行為一致）
+        if publish_to_user_input:
+            self.ros_node.publish_user_input(text)
 
         # 關鍵字控制命令：只發 ROS，不送 LLM（避免多餘推論）
         is_control_keyword = False
@@ -1209,7 +1238,7 @@ class MainWindow(QMainWindow):
                 text = '<image>\n' + text
             
             # 建立內容：(text, image, mode)
-            content = (text, image, 'Original')  # Match worker/SAM3 coordinate frame.
+            content = (text, image, 'Original')  # Match infer_and_mark.py coordinate frame.
             
             # 添加使用者訊息
             self.conversation_state.append_message(self.conversation_state.roles[0], content)
@@ -1357,29 +1386,25 @@ class MainWindow(QMainWindow):
             )
 
     # ------------------------------------------------------------------
-    # 多點 pixel 選擇：依 x+y 排序取指定名次
+    # 多點 pixel 選擇：選出影像上最右下角的點
     # 輸入 pixel_points 為旋轉後影像座標（即 LLM 輸出的座標）
     # ------------------------------------------------------------------
     def _select_best_pixel(self, pixel_points):
         """
-            直接在旋轉後影像座標中選點，依據：
-                1. px + py 最大
-                2. py 最大（若總和相同，偏下優先）
-                3. px 最大（若仍相同，偏右優先）
-            回傳排序第 N 名的 (px, py)（旋轉後影像座標）
+        直接在旋轉後影像座標中選點，依據：
+          1. px + py 最大（最靠右下）
+          2. py 最大（若總和相同，偏下優先）
+          3. px 最大（若仍相同，偏右優先）
+        回傳最佳候選的 (px, py)（旋轉後影像座標）
         """
         if not pixel_points:
             self.ros_node.get_logger().warn('select_best_pixel: no candidates')
             return (0, 0)
 
-        ranked = sorted(
+        best = max(
             pixel_points,
             key=lambda p: (float(p[0]) + float(p[1]), float(p[1]), float(p[0])),
-            reverse=True,
         )
-        rank = 1  # 第1名; 第3名就改成 3
-        idx = min(max(rank - 1, 0), len(ranked) - 1)
-        best = ranked[idx]
         self.ros_node.get_logger().info(
             f'select_best_pixel: best=({best[0]:.0f},{best[1]:.0f}) '
             f'pixel_sum={float(best[0]) + float(best[1]):.0f} '
@@ -1434,7 +1459,7 @@ class MainWindow(QMainWindow):
             start_msg = String()
             start_msg.data = "start"
             self.ros_node.start_listen_pub.publish(start_msg)
-            self.ros_node.get_logger().info("Sent /start_listen signal to audio listener worker")
+            self.get_logger().info("Sent /start_listen signal to audio listener worker")
             
             return
 
@@ -1569,7 +1594,7 @@ def main(args=None):
     
     # 解析命令列參數
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
-    parser.add_argument("--controller-url", type=str, default="http://10.0.0.30:11000",
+    parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
                        help="LLM controller URL")
     parser.add_argument("--model-path", type=str, default="PME033541/vla13",
                        help="Model path to load in the GUI")

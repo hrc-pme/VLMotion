@@ -28,8 +28,10 @@ setup(
         'console_scripts': [
             'white_point_gui = white_point_pipeline.white_point_gui:main',
             'white_point_gui_standalone = white_point_pipeline.white_point_gui_standalone:main',
+            'white_point_gui_unity = white_point_pipeline.white_point_gui_unity:main',
             'white_point_to_3d = white_point_pipeline.white_point_to_3d:main',
             'white_point_full_motion = white_point_pipeline.white_point_full_motion:main',
+            'white_point_direct_motion = white_point_pipeline.white_point_direct_motion:main',
             'keyboard_nav_teleop = white_point_pipeline.keyboard_nav_teleop:main',
             'camera_tf_calibrator = white_point_pipeline.camera_tf_calibrator:main',
         ],

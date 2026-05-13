@@ -192,7 +192,7 @@ class WhitePointTo3D(Node):
         xy_max = pts_xy.max(axis=0)
         xy_range = xy_max - xy_min
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Point cloud XY range: X=[{xy_min[0]:.3f}, {xy_max[0]:.3f}] ({xy_range[0]:.3f}m), '
             f'Y=[{xy_min[1]:.3f}, {xy_max[1]:.3f}] ({xy_range[1]:.3f}m)'
         )
@@ -209,10 +209,10 @@ class WhitePointTo3D(Node):
         main_direction = V[:, 1]  # 最大特徵值對應的方向（沿牆面）
         n_xy = V[:, 0]  # 最小特徵值對應的方向（法向量）
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f'PCA eigenvalues: λ1={w[0]:.6f} (normal), λ2={w[1]:.6f} (tangent), ratio={w[1]/max(w[0], 1e-9):.2f}'
         )
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Main direction (along wall): [{main_direction[0]:.3f}, {main_direction[1]:.3f}]'
         )
         
@@ -232,14 +232,14 @@ class WhitePointTo3D(Node):
         elif angle_deviation < -180.0:
             angle_deviation += 360.0
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Wall normal angle: {pca_angle:.1f}° (deviation from robot forward: {angle_deviation:.1f}°)'
         )
         
         # 構建 3D 法向量，Z 分量為 0（完全水平）
         n = np.array([n_xy[0], n_xy[1], 0.0], dtype=np.float64)
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Final wall normal (XY-plane): [{n[0]:.3f}, {n[1]:.3f}, {n[2]:.3f}]'
         )
             
@@ -287,7 +287,7 @@ class WhitePointTo3D(Node):
         cluster_mask = labels == largest_cluster_label
         cluster_points = pts_xyz[cluster_mask]
         
-        self.get_logger().info(
+        self.get_logger().debug(
             f'DBSCAN (XY-plane): {len(unique_labels)} clusters, '
             f'largest has {largest_cluster_size} points '
             f'({100.0*largest_cluster_size/len(pts_xyz):.1f}%)'
@@ -634,7 +634,7 @@ class WhitePointTo3D(Node):
                     self.get_clock().now().to_msg()
                 )
                 self.raw_points_pub.publish(raw_cloud_msg)
-                self.get_logger().info(f'Published {len(pts_base)} raw points for visualization')
+                self.get_logger().debug(f'Published {len(pts_base)} raw points for visualization')
                 
                 # 使用 DBSCAN 聚類找出牆面主體
                 wall_points = self.cluster_wall_points_dbscan(pts_base)
@@ -647,7 +647,7 @@ class WhitePointTo3D(Node):
                         self.get_clock().now().to_msg()
                     )
                     self.wall_points_pub.publish(wall_cloud_msg)
-                    self.get_logger().info(f'Published {len(wall_points)} wall points for visualization')
+                    self.get_logger().debug(f'Published {len(wall_points)} wall points for visualization')
                     
                     # 對聚類後的點進行 PCA 擬合平面（XY 平面，垂直牆面假設）
                     n = self.fit_plane_normal_pca(wall_points)
@@ -673,7 +673,7 @@ class WhitePointTo3D(Node):
                     pt_base.point.y = float(corrected_point[1])
                     pt_base.point.z = float(corrected_point[2])
                     
-                    self.get_logger().info(
+                    self.get_logger().debug(
                         f'Depth correction applied:\n'
                         f'  Original:  ({original_point[0]:.3f}, {original_point[1]:.3f}, {original_point[2]:.3f})\n'
                         f'  Corrected: ({corrected_point[0]:.3f}, {corrected_point[1]:.3f}, {corrected_point[2]:.3f})\n'

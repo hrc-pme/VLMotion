@@ -26,7 +26,7 @@ def generate_launch_description():
 
     model_path_arg = DeclareLaunchArgument(
         'model_path',
-        default_value='PME033541/vla5',
+        default_value='PME033541/vla13',
         description='Model path for the LLM worker'
     )
 
