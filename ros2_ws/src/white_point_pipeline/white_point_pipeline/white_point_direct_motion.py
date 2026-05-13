@@ -54,6 +54,9 @@ class WhitePointDirectMotion(Node):
         self.declare_parameter('gripper_center_back_offset', 0.02)
         self.declare_parameter('gripper_z_offset', 0.10)
         self.declare_parameter('arm_contact_margin', 0.025)
+        self.declare_parameter('arm_contact_overshoot_enabled', False)
+        self.declare_parameter('final_contact_push_enabled', True)
+        self.declare_parameter('final_contact_push_distance', 0.02)
         self.declare_parameter('first_lift_adaptive_enabled', True)
         self.declare_parameter('first_lift_far_dist_near', 0.50)
         self.declare_parameter('first_lift_far_dist_far', 1.60)
@@ -81,16 +84,19 @@ class WhitePointDirectMotion(Node):
         self.declare_parameter('side_reach_x_tolerance', 0.025)
         self.declare_parameter('arm_extension_axis', 'y')
         self.declare_parameter('arm_extension_sign', -1.0)
-        self.declare_parameter('arm_contact_tolerance', 0.035)
+        self.declare_parameter('arm_contact_tolerance', 0.020)
         self.declare_parameter('arm_contact_retry_limit', 2)
         self.declare_parameter('wrist_initial_yaw', math.pi / 2.0)
         self.declare_parameter('wrist_contact_yaw', 0.0)
         self.declare_parameter('wrist_contact_pitch', 0.0)
         self.declare_parameter('wrist_contact_roll', 0.0)
+        self.declare_parameter('close_gripper_on_start', True)
+        self.declare_parameter('gripper_joint_name', 'joint_gripper_finger_left')
+        self.declare_parameter('gripper_closed_position', -0.05)
         self.declare_parameter('dynamic_wrist_yaw_enabled', True)
         self.declare_parameter('dynamic_wrist_yaw_limit_deg', 70.0)
         self.declare_parameter('wrist_lateral_reach', 0.18)
-        self.declare_parameter('side_axis_gripper_lateral_tolerance', 0.08)
+        self.declare_parameter('side_axis_gripper_lateral_tolerance', 0.020)
         self.declare_parameter('lock_base_yaw_after_first_stage', True)
         self.declare_parameter('second_stage_yaw_micro_adjust_enabled', True)
         self.declare_parameter('second_stage_yaw_micro_adjust_limit_deg', 8.0)
@@ -115,6 +121,9 @@ class WhitePointDirectMotion(Node):
         self.gripper_center_back_offset = float(self.get_parameter('gripper_center_back_offset').value)
         self.gripper_z_offset = float(self.get_parameter('gripper_z_offset').value)
         self.arm_contact_margin = float(self.get_parameter('arm_contact_margin').value)
+        self.arm_contact_overshoot_enabled = bool(self.get_parameter('arm_contact_overshoot_enabled').value)
+        self.final_contact_push_enabled = bool(self.get_parameter('final_contact_push_enabled').value)
+        self.final_contact_push_distance = float(self.get_parameter('final_contact_push_distance').value)
         self.first_lift_adaptive_enabled = bool(self.get_parameter('first_lift_adaptive_enabled').value)
         self.first_lift_far_dist_near = float(self.get_parameter('first_lift_far_dist_near').value)
         self.first_lift_far_dist_far = float(self.get_parameter('first_lift_far_dist_far').value)
@@ -139,6 +148,9 @@ class WhitePointDirectMotion(Node):
         self.arm_contact_tolerance = float(self.get_parameter('arm_contact_tolerance').value)
         self.arm_contact_retry_limit = int(self.get_parameter('arm_contact_retry_limit').value)
         self.wrist_initial_yaw = float(self.get_parameter('wrist_initial_yaw').value)
+        self.close_gripper_on_start = bool(self.get_parameter('close_gripper_on_start').value)
+        self.gripper_joint_name = str(self.get_parameter('gripper_joint_name').value)
+        self.gripper_closed_position = float(self.get_parameter('gripper_closed_position').value)
         self.dynamic_wrist_yaw_enabled = bool(self.get_parameter('dynamic_wrist_yaw_enabled').value)
         self.dynamic_wrist_yaw_limit = math.radians(float(self.get_parameter('dynamic_wrist_yaw_limit_deg').value))
         self.wrist_lateral_reach = float(self.get_parameter('wrist_lateral_reach').value)
@@ -321,6 +333,7 @@ class WhitePointDirectMotion(Node):
             'align_target',
             'final_approach',
             'extend_arm',
+            'final_push',
             'done',
         )
 
@@ -408,11 +421,17 @@ class WhitePointDirectMotion(Node):
         """Map this node's internal state to the GUI's existing phase protocol."""
         if self.phase in ('idle', 'done'):
             return 'select_first_point'
-        if self.phase in ('reset_wrist', 'raise_lift', 'move_approach', 'move_side_reach_pose'):
+        if self.phase in (
+            'reset_wrist',
+            'raise_lift',
+            'move_approach',
+            'move_side_reach_pose',
+            'prepare_second_point',
+        ):
             return 'moving_to_approach'
         if self.phase == 'waiting_second_point':
             return 'waiting_second_point'
-        if self.phase in ('align_target', 'final_approach', 'extend_arm'):
+        if self.phase in ('align_target', 'final_approach', 'extend_arm', 'final_push'):
             return 'moving_to_target'
         return 'select_first_point'
 
@@ -477,14 +496,17 @@ class WhitePointDirectMotion(Node):
                                 f'Locked second-stage base yaw at '
                                 f'{math.degrees(self.locked_base_yaw_world):.1f}deg.'
                             )
-                    self.send_wrist_contact_pose()
-                    self.phase = 'waiting_second_point'
+                    self.phase = 'prepare_second_point'
                     self.get_logger().info(
-                        'Base yaw aligned to first target. Waiting for second, closer point selection.'
+                        'Base yaw aligned to first target. Setting wrist contact pose before second selection.'
                     )
                 else:
                     self.phase = 'final_approach'
                     self.get_logger().info('Base yaw aligned. Starting final forward approach.')
+            return
+
+        if self.phase == 'prepare_second_point':
+            self.handle_wrist_contact_pose()
             return
 
         if self.phase == 'waiting_second_point':
@@ -499,6 +521,10 @@ class WhitePointDirectMotion(Node):
 
         if self.phase == 'extend_arm':
             self.handle_arm_extend()
+            return
+
+        if self.phase == 'final_push':
+            self.handle_final_contact_push()
             return
 
     def compute_approach_point(self):
@@ -743,14 +769,15 @@ class WhitePointDirectMotion(Node):
         locked_side_axis = self.is_locked_side_axis_plan()
         lateral_reachable = True
         if locked_side_axis:
-            target_base = self.transform_point_to_base(self.target_world)
-            if target_base is None:
-                return False
-            along_base = self.arm_lateral_error(target_base.x, target_base.y)
             gripper_delta = self.compute_gripper_target_error()
             if gripper_delta is not None:
+                along_base = self.arm_lateral_error(*gripper_delta)
                 extension = self.arm_extension_distance(*gripper_delta)
             else:
+                target_base = self.transform_point_to_base(self.target_world)
+                if target_base is None:
+                    return False
+                along_base = self.arm_lateral_error(target_base.x, target_base.y)
                 side_distance = self.arm_extension_distance(target_base.x, target_base.y)
                 extension = self.side_axis_arm_extension_from_distance(side_distance)
             lateral_base = 0.0
@@ -763,12 +790,13 @@ class WhitePointDirectMotion(Node):
             )
             lateral_reachable = abs(lateral_base) <= self.wrist_lateral_reach
 
+        along_tolerance = self.side_axis_gripper_lateral_tolerance if locked_side_axis else self.final_y_tolerance
         yaw_aligned = (
             abs(yaw_error) <= self.yaw_tolerance
             or (yaw_locked and not self.second_stage_yaw_micro_adjust_enabled)
         )
         aligned = (
-            abs(along_base) <= self.final_y_tolerance
+            abs(along_base) <= along_tolerance
             and (
                 locked_side_axis
                 or (ignore_lateral and lateral_reachable)
@@ -809,7 +837,7 @@ class WhitePointDirectMotion(Node):
         if not yaw_aligned:
             max_angular = self.second_stage_yaw_max_angular_speed if yaw_locked else 0.25
             twist.angular.z = self.clamp(self.k_angular * yaw_error, -max_angular, max_angular)
-        if abs(along_base) > self.final_y_tolerance:
+        if abs(along_base) > along_tolerance:
             twist.linear.x = self.clamp(self.k_linear * along_base, -self.final_max_linear_speed, self.final_max_linear_speed)
 
         self.cmd_vel_pub.publish(twist)
@@ -959,9 +987,9 @@ class WhitePointDirectMotion(Node):
 
     def send_wrist_contact_pose(self):
         if self.wrist_contact_pose_sent:
-            return
+            return True
         if self.wrist_sending or (self.wrist_goal_handle is not None and self.wrist_result is None):
-            return
+            return False
 
         wrist_yaw, wrist_pitch, wrist_roll = self.get_wrist_contact_positions()
         self.clear_goal('wrist')
@@ -976,7 +1004,32 @@ class WhitePointDirectMotion(Node):
             1.0,
             'wrist',
         ):
+            return True
+        return False
+
+    def handle_wrist_contact_pose(self):
+        self.stop_base()
+        if self.wrist_contact_pose_sent:
+            self.phase = 'waiting_second_point'
+            self.get_logger().info('Wrist contact pose ready. Waiting for second, closer point selection.')
+            return
+
+        if self.wrist_goal_handle is None and not self.wrist_sending:
+            self.send_wrist_contact_pose()
+            return
+
+        if self.wrist_result is None:
+            return
+
+        if self.wrist_result.status == 4:
             self.wrist_contact_pose_sent = True
+            self.phase = 'waiting_second_point'
+            self.get_logger().info('Wrist contact pose ready. Waiting for second, closer point selection.')
+        else:
+            self.get_logger().warn(
+                f'Wrist contact pose failed with status {self.wrist_result.status}; retrying before second point.'
+            )
+            self.clear_goal('wrist')
 
     def is_non_head_motion_active(self):
         base_motion_active = (
@@ -985,7 +1038,7 @@ class WhitePointDirectMotion(Node):
         )
         return (
             base_motion_active
-            or self.phase in ('reset_wrist', 'raise_lift', 'extend_arm')
+            or self.phase in ('reset_wrist', 'raise_lift', 'prepare_second_point', 'extend_arm', 'final_push')
             or self.wrist_sending
             or self.lift_sending
             or self.arm_sending
@@ -997,13 +1050,21 @@ class WhitePointDirectMotion(Node):
     def handle_wrist_reset(self):
         if self.wrist_goal_handle is None and not self.wrist_sending:
             wrist_yaw, wrist_pitch, wrist_roll = self.get_wrist_initial_positions()
+            names = ['joint_wrist_yaw', 'joint_wrist_pitch', 'joint_wrist_roll']
+            positions = [wrist_yaw, wrist_pitch, wrist_roll]
+            gripper_text = ''
+            if self.close_gripper_on_start:
+                names.append(self.gripper_joint_name)
+                positions.append(self.gripper_closed_position)
+                gripper_text = f', gripper={self.gripper_closed_position:.2f}rad'
             self.get_logger().info(
                 f'Setting initial wrist pose: yaw={math.degrees(wrist_yaw):.1f}deg, '
-                f'pitch={math.degrees(wrist_pitch):.1f}deg, roll={math.degrees(wrist_roll):.1f}deg.'
+                f'pitch={math.degrees(wrist_pitch):.1f}deg, roll={math.degrees(wrist_roll):.1f}deg'
+                f'{gripper_text}.'
             )
             self.send_joint_goal(
-                ['joint_wrist_yaw', 'joint_wrist_pitch', 'joint_wrist_roll'],
-                [wrist_yaw, wrist_pitch, wrist_roll],
+                names,
+                positions,
                 1.5,
                 'wrist',
             )
@@ -1097,6 +1158,14 @@ class WhitePointDirectMotion(Node):
             return
         if self.arm_result.status == 4:
             if self.confirm_gripper_contact():
+                self.clear_goal('arm')
+                if self.final_contact_push_enabled and self.final_contact_push_distance > 0.0:
+                    self.phase = 'final_push'
+                    self.get_logger().info(
+                        f'Gripper contact point reached. Applying final push '
+                        f'{self.final_contact_push_distance * 100:.1f}cm outward.'
+                    )
+                    return
                 self.phase = 'done'
                 self.stop_base()
                 self.get_logger().info('Direct target motion complete: gripper contact point reached.')
@@ -1121,6 +1190,65 @@ class WhitePointDirectMotion(Node):
             self.phase = 'failed'
             self.stop_base()
 
+    def handle_final_contact_push(self):
+        if self.arm_goal_handle is None and not self.arm_sending:
+            self.send_final_contact_push_goal()
+            return
+        if self.arm_result is None:
+            return
+        if self.arm_result.status in (4, 6):
+            self.phase = 'done'
+            self.stop_base()
+            if self.arm_result.status == 6:
+                self.get_logger().info(
+                    'Final 2cm push stopped by guarded contact; treating push as complete.'
+                )
+            else:
+                self.get_logger().info('Final 2cm push complete.')
+            return
+        self.get_logger().warn(f'Final contact push failed with status {self.arm_result.status}.')
+        self.phase = 'failed'
+        self.stop_base()
+
+    def send_final_contact_push_goal(self):
+        if not self.trajectory_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn('Joint trajectory action server is not ready.')
+            return False
+
+        current_arm = (
+            self.current_arm_pos
+            if self.current_arm_pos is not None
+            else self.last_commanded_arm_pos
+        )
+        push_distance = max(0.0, self.final_contact_push_distance)
+        arm_target = self.clamp(current_arm + push_distance, self.arm_min, self.arm_max)
+        actual_push = arm_target - current_arm
+
+        lift_pos = self.current_lift_pos
+        if lift_pos is None and self.target_world is not None:
+            base_target = self.transform_point_to_base(self.target_world)
+            if base_target is None:
+                return False
+            lift_pos = self.clamp(base_target.z - self.gripper_z_offset, self.lift_min, self.lift_max)
+        if lift_pos is None:
+            self.get_logger().warn('Cannot apply final push because lift position is unknown.')
+            return False
+
+        wrist_yaw, wrist_pitch, wrist_roll = self.get_wrist_contact_positions()
+        self.get_logger().info(
+            f'Final contact push: current_arm={current_arm:.3f}m, '
+            f'target_extension={arm_target:.3f}m, push={actual_push * 100:.1f}cm.'
+        )
+        if not self.send_joint_goal(
+            ['joint_lift', 'wrist_extension', 'joint_wrist_yaw', 'joint_wrist_pitch', 'joint_wrist_roll'],
+            [lift_pos, arm_target, wrist_yaw, wrist_pitch, wrist_roll],
+            1.0,
+            'arm',
+        ):
+            return False
+        self.last_commanded_arm_pos = arm_target
+        return True
+
     def send_arm_extension_goal(self):
         if self.target_world is None:
             return False
@@ -1141,11 +1269,10 @@ class WhitePointDirectMotion(Node):
             yaw_locked = self.get_locked_second_stage_base_yaw() is not None
             locked_side_axis = self.is_locked_side_axis_plan()
             if locked_side_axis:
-                target_base = self.transform_point_to_base(self.target_world)
                 gripper_delta = self.compute_gripper_target_error()
-                if target_base is None or gripper_delta is None:
+                if gripper_delta is None:
                     return False
-                along_base = self.arm_lateral_error(target_base.x, target_base.y)
+                along_base = self.arm_lateral_error(*gripper_delta)
                 extension_delta = self.arm_extension_distance(*gripper_delta)
                 lateral_error = self.arm_lateral_error(*gripper_delta)
                 ignore_lateral = False
@@ -1162,8 +1289,13 @@ class WhitePointDirectMotion(Node):
                 abs(yaw_error) <= self.yaw_tolerance
                 or (yaw_locked and not self.second_stage_yaw_micro_adjust_enabled)
             )
+            along_tolerance = (
+                self.side_axis_gripper_lateral_tolerance
+                if locked_side_axis
+                else self.final_y_tolerance
+            )
             if (
-                abs(along_base) > self.final_y_tolerance
+                abs(along_base) > along_tolerance
                 or not yaw_aligned
             ):
                 self.get_logger().warn(
@@ -1216,8 +1348,9 @@ class WhitePointDirectMotion(Node):
                 if self.current_arm_pos is not None
                 else self.last_commanded_arm_pos
             )
+            contact_overshoot = self.effective_arm_contact_margin()
             arm_target = self.clamp(
-                current_arm + extension_delta + self.arm_contact_margin,
+                current_arm + extension_delta + contact_overshoot,
                 self.arm_min,
                 self.arm_max,
             )
@@ -1238,7 +1371,10 @@ class WhitePointDirectMotion(Node):
             lift_pos = self.clamp(base_target.z - self.gripper_z_offset, self.lift_min, self.lift_max)
 
         if 'arm_target' not in locals():
-            arm_target = self.clamp(extension + self.arm_contact_margin, self.arm_min, self.arm_max)
+            contact_overshoot = self.effective_arm_contact_margin()
+            arm_target = self.clamp(extension + contact_overshoot, self.arm_min, self.arm_max)
+        else:
+            contact_overshoot = self.effective_arm_contact_margin()
         wrist_yaw, wrist_pitch, wrist_roll = self.get_wrist_contact_positions()
         if (
             self.dynamic_wrist_yaw_enabled
@@ -1256,6 +1392,7 @@ class WhitePointDirectMotion(Node):
             f'Extending arm for contact: target_extension={arm_target:.3f}m, '
             f'current_arm={self.current_arm_pos if self.current_arm_pos is not None else float("nan"):.3f}m, '
             f'remaining_along_contact={remaining_to_target * 100:.1f}cm, '
+            f'overshoot={contact_overshoot * 100:.1f}cm, '
             f'command_delta={extension * 100:.1f}cm, lateral={lateral_error * 100:.1f}cm.'
         )
         self.send_joint_goal(
@@ -1292,10 +1429,7 @@ class WhitePointDirectMotion(Node):
                 )
                 reached = (
                     abs(extension_error) <= self.arm_contact_tolerance
-                    and abs(lateral_error) <= max(
-                        self.side_axis_gripper_lateral_tolerance,
-                        self.arm_contact_tolerance,
-                    )
+                    and abs(lateral_error) <= self.side_axis_gripper_lateral_tolerance
                     and yaw_aligned
                 )
                 self.get_logger().info(
@@ -1309,7 +1443,7 @@ class WhitePointDirectMotion(Node):
                 return reached
             lateral_reachable = abs(lateral_base) <= self.wrist_lateral_reach
             arm_target = self.clamp(
-                self.end_effector_plan.arm_extension + self.arm_contact_margin,
+                self.end_effector_plan.arm_extension + self.effective_arm_contact_margin(),
                 self.arm_min,
                 self.arm_max,
             )
@@ -1392,6 +1526,11 @@ class WhitePointDirectMotion(Node):
         future = self.trajectory_client.send_goal_async(goal)
         future.add_done_callback(lambda fut: self.joint_goal_response_callback(fut, kind))
         return True
+
+    def effective_arm_contact_margin(self):
+        if not self.arm_contact_overshoot_enabled:
+            return 0.0
+        return max(0.0, self.arm_contact_margin)
 
     def joint_goal_response_callback(self, future, kind):
         try:
