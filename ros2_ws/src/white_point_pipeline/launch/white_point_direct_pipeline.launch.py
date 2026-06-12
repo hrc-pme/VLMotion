@@ -16,8 +16,9 @@ import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, OpaqueFunction, RegisterEventHandler
 from launch.conditions import IfCondition
+from launch.event_handlers import OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -78,6 +79,8 @@ def launch_setup(context, *args, **kwargs):
     controller_url = LaunchConfiguration('controller_url').perform(context)
     model_path = LaunchConfiguration('model_path').perform(context)
     use_compressed_color = LaunchConfiguration('use_compressed_color').perform(context)
+    require_point_confirmation = LaunchConfiguration('require_point_confirmation').perform(context)
+    point_confirmation_timeout_sec = LaunchConfiguration('point_confirmation_timeout_sec').perform(context)
 
     cam = load_camera_config(camera_name)
     cal = load_calibration_defaults(camera_name)
@@ -190,6 +193,8 @@ def launch_setup(context, *args, **kwargs):
             'depth_topic': depth_topic,
             'camera_info_topic': camera_info_topic,
             'camera_frame': optical_frame,
+            'require_point_confirmation': str(require_point_confirmation).lower() in ('1', 'true', 'yes', 'on'),
+            'point_confirmation_timeout_sec': float(point_confirmation_timeout_sec),
         }],
         arguments=[
             '--controller-url', controller_url,
@@ -245,7 +250,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'mode',
             default_value='navigation',
-            description='Stretch driver mode (position / navigation / manipulation)',
+            description='Stretch driver mode used while this pipeline is running.',
+        ),
+        DeclareLaunchArgument(
+            'restore_gamepad_on_shutdown',
+            default_value='true',
+            description='Switch Stretch back to gamepad mode when this launch is stopped.',
         ),
         DeclareLaunchArgument(
             'controller_url',
@@ -263,6 +273,16 @@ def generate_launch_description():
             description='Use compressed color topic for GUI (/color/image_raw/compressed)',
         ),
         DeclareLaunchArgument(
+            'require_point_confirmation',
+            default_value='true',
+            description='Show Yes/No confirmation dialog before publishing a selected point',
+        ),
+        DeclareLaunchArgument(
+            'point_confirmation_timeout_sec',
+            default_value='3.0',
+            description='Confirmation dialog timeout in seconds; 0 disables timeout',
+        ),
+        DeclareLaunchArgument(
             'enable_respeaker',
             default_value='true',
             description='Launch ReSpeaker pipeline (/speech_to_text and /sound_direction)',
@@ -278,4 +298,24 @@ def generate_launch_description():
             description='Pause speech recognition while sound_play is speaking',
         ),
         OpaqueFunction(function=launch_setup),
+        RegisterEventHandler(
+            OnShutdown(
+                on_shutdown=[
+                    ExecuteProcess(
+                        cmd=[
+                            'timeout',
+                            '2',
+                            'ros2',
+                            'service',
+                            'call',
+                            '/switch_to_gamepad_mode',
+                            'std_srvs/srv/Trigger',
+                            '{}',
+                        ],
+                        condition=IfCondition(LaunchConfiguration('restore_gamepad_on_shutdown')),
+                        output='screen',
+                    ),
+                ]
+            )
+        ),
     ])

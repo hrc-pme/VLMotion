@@ -177,6 +177,15 @@ def voice_support_status():
     return True, ""
 
 
+def bool_param(value):
+    """Parse ROS/launch boolean values that may arrive as bool, number, or string."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def record_audio_pyaudio(duration=3, rate=16000, chunk=1024):
     """Capture audio from the default microphone and return WAV bytes."""
     if pyaudio is None:
@@ -444,6 +453,7 @@ class ROSSignalBridge(QObject):
     point3d_signal = pyqtSignal(float, float, float)
     selection_phase_signal = pyqtSignal(str)
     speech_text_signal = pyqtSignal(str)
+    voice_input_signal = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
@@ -519,6 +529,8 @@ class WhitePointGUI(Node):
 
         # 可配置的相機 color topic（由 launch 檔根據 CAMERA 變數自動設定）
         self.declare_parameter('color_topic', '')
+        self.declare_parameter('require_point_confirmation', True)
+        self.declare_parameter('point_confirmation_timeout_sec', 3.0)
         color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
         self.get_logger().info(f'Subscribing to color topic: {color_topic}')
 
@@ -571,6 +583,18 @@ class WhitePointGUI(Node):
         self.user_input_pub = self.create_publisher(String, '/user_input', 10)
 
         # 發布開始監聽訊號（遠端麥克風節點）
+        self.voice_input_sub = self.create_subscription(
+            String,
+            '/voice_input',
+            self.voice_input_callback,
+            10
+        )
+        self.marked_image_pub = self.create_publisher(
+            CompressedImage,
+            '/voice_llm_marked_image/compressed',
+            10
+        )
+
         self.start_listen_pub = self.create_publisher(String, '/start_listen', 10)
 
         # 訂閱 ReSpeaker speech_to_text（供 GUI 按鈕語音輸入使用）
@@ -664,6 +688,13 @@ class WhitePointGUI(Node):
         if text:
             self.signal_bridge.speech_text_signal.emit(text)
 
+    def voice_input_callback(self, msg: String):
+        """Forward Unity /voice_input into the same path as pressing Send."""
+        text = (msg.data or '').strip()
+        if text:
+            self.signal_bridge.voice_input_signal.emit(text)
+            self.get_logger().info(f"Voice input received: {text}")
+
     def publish_pixel(self, x: int, y: int):
         """發布點擊的像素座標"""
         self.last_click = (x, y)
@@ -715,6 +746,20 @@ class WhitePointGUI(Node):
         self.user_input_pub.publish(msg)
         self.get_logger().info(f"User input: {text}")
 
+    def publish_marked_image(self, image_bgr):
+        """Publish the LLM-marked preview image for Unity display."""
+        if image_bgr is None:
+            return
+        ok, encoded = cv2.imencode('.jpg', image_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            self.get_logger().warn('Failed to encode marked image')
+            return
+        msg = CompressedImage()
+        msg.format = 'jpeg'
+        msg.data = encoded.tobytes()
+        self.marked_image_pub.publish(msg)
+        self.get_logger().info('Published marked image: /voice_llm_marked_image/compressed')
+
 
 class MainWindow(QMainWindow):
     """主視窗"""
@@ -739,6 +784,13 @@ class MainWindow(QMainWindow):
         self.llm_auto_retry_count = 0      # 目前點已自動嘗試次數
         self.llm_auto_max_retries = 1      # 每個點最多自動嘗試次數（含第一次）
         self.llm_waiting_second_point = False  # 按下 Yes 後等待進入 waiting_second_point
+        self.require_point_confirmation = bool_param(
+            self.ros_node.get_parameter('require_point_confirmation').value
+        )
+        self.point_confirmation_timeout_sec = max(
+            0.0,
+            float(self.ros_node.get_parameter('point_confirmation_timeout_sec').value)
+        )
         
         # 初始化 conversation state
         if default_conversation is not None:
@@ -899,6 +951,7 @@ class MainWindow(QMainWindow):
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
         self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
         self.signal_bridge.speech_text_signal.connect(self.on_ros_speech_text)
+        self.signal_bridge.voice_input_signal.connect(self.on_external_voice_input)
         
         # Qt 信號
         self.image_label.clicked.connect(self.on_image_clicked)
@@ -961,6 +1014,19 @@ class MainWindow(QMainWindow):
             self.llm_auto_retry_count = 1  # 第二點從第 1 次重新計算
             QTimer.singleShot(800, self._resend_to_llm)
     
+    def publish_marked_preview(self, pixel_points):
+        """Create the marked image from current_image and publish it for Unity."""
+        if not pixel_points or self.current_image is None:
+            return
+        try:
+            rgb_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            pil_image = PILImage.fromarray(rgb_image)
+            annotated_image = visualize_2d(pil_image, pixel_points, [], scale=1.0)
+            annotated_cv = cv2.cvtColor(np.array(annotated_image), cv2.COLOR_RGB2BGR)
+            self.ros_node.publish_marked_image(annotated_cv)
+        except Exception as e:
+            print(f"Failed to publish marked preview: {e}", file=sys.stderr)
+
     def append_point_preview(self, pixel_points):
         """在右側輸出區插入帶叉叉標註的影像"""
         if not pixel_points or self.current_image is None:
@@ -1009,7 +1075,7 @@ class MainWindow(QMainWindow):
         )
     
     def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual"):
-        """依照階段要求，先詢問確認再發布像素點"""
+        """依照階段要求確認後發布像素點；可用 ROS 參數略過或設定逾時自動 Yes。"""
         if self.current_image is None:
             self.output_text.append(
                 "<b style='color: #F44336;'>錯誤:</b> 尚未收到相機影像，無法選點。"
@@ -1041,13 +1107,12 @@ class MainWindow(QMainWindow):
         if source == "manual":
             self.append_manual_selection_output(x, y)
 
-        reply = QMessageBox.question(
-            self,
-            "模型建議點",
-            f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
+        if self.require_point_confirmation:
+            reply = self._ask_point_confirmation(
+                f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？"
+            )
+        else:
+            reply = QMessageBox.Yes
 
         if reply != QMessageBox.Yes:
             # 若是 LLM 推薦的點被拒絕，且還有剩餘重試次數，自動重新推論
@@ -1061,6 +1126,34 @@ class MainWindow(QMainWindow):
         self.ros_node.publish_pixel(x, y)
         if source in ("llm", "llm_adjusted") and self.selection_phase == "select_first_point":
             self.llm_waiting_second_point = True
+
+    def _ask_point_confirmation(self, text: str):
+        box = QMessageBox(self)
+        box.setWindowTitle("模型建議點")
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.Yes)
+
+        timer = None
+        timeout_ms = int(self.point_confirmation_timeout_sec * 1000)
+        if timeout_ms > 0:
+            timer = QTimer(box)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: box.done(QMessageBox.Yes))
+            timer.start(timeout_ms)
+
+        reply = box.exec_()
+        if timer is not None and timer.isActive():
+            timer.stop()
+        return reply
+
+    def on_external_voice_input(self, text: str):
+        """Use Unity /voice_input exactly like text entered and sent in the GUI."""
+        text = (text or '').strip()
+        if not text:
+            return
+        self.input_field.setText(text)
+        QTimer.singleShot(0, self.send_user_input)
 
     def send_user_input(self):
         """發送使用者輸入並查詢 LLM"""
@@ -1290,6 +1383,7 @@ class MainWindow(QMainWindow):
                 f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
             )
             self.append_point_preview(pixel_points)
+            self.publish_marked_preview(pixel_points)
 
             # ---- 儲存推論結果影像（帶叉叉標記） ----
             try:
@@ -1352,6 +1446,7 @@ class MainWindow(QMainWindow):
                 f"<b style='color: #2196F3;'>LLM:</b> {point_info}"
             )
             self.append_point_preview(self.llm_points)
+            self.publish_marked_preview(self.llm_points)
             self.output_text.verticalScrollBar().setValue(
                 self.output_text.verticalScrollBar().maximum()
             )

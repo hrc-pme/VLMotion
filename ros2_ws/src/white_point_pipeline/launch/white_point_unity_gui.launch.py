@@ -154,6 +154,8 @@ def launch_setup(context, *args, **kwargs):
     controller_url = LaunchConfiguration('controller_url').perform(context)
     model_path = LaunchConfiguration('model_path').perform(context)
     use_compressed_color = LaunchConfiguration('use_compressed_color').perform(context)
+    require_point_confirmation = LaunchConfiguration('require_point_confirmation').perform(context)
+    point_confirmation_timeout_sec = LaunchConfiguration('point_confirmation_timeout_sec').perform(context)
     keyboard_autonomy_phase_topic = LaunchConfiguration('keyboard_autonomy_phase_topic').perform(context)
     keyboard_autonomy_idle_phase = LaunchConfiguration('keyboard_autonomy_idle_phase').perform(context)
 
@@ -247,6 +249,8 @@ def launch_setup(context, *args, **kwargs):
             'depth_topic': primary_depth_topic,
             'camera_info_topic': primary_camera_info_topic,
             'camera_frame': primary_optical_frame,
+            'require_point_confirmation': str(require_point_confirmation).lower() in ('1', 'true', 'yes', 'on'),
+            'point_confirmation_timeout_sec': float(point_confirmation_timeout_sec),
         }],
         arguments=[
             '--controller-url', controller_url,
@@ -337,6 +341,16 @@ def generate_launch_description():
             'use_compressed_color',
             default_value='true',
             description='Use compressed color topic for GUI (/color/image_raw/compressed)',
+        ),
+        DeclareLaunchArgument(
+            'require_point_confirmation',
+            default_value='true',
+            description='Show Yes/No confirmation dialog before publishing a selected point',
+        ),
+        DeclareLaunchArgument(
+            'point_confirmation_timeout_sec',
+            default_value='3.0',
+            description='Confirmation dialog timeout in seconds; 0 disables timeout',
         ),
         DeclareLaunchArgument(
             'enable_respeaker',

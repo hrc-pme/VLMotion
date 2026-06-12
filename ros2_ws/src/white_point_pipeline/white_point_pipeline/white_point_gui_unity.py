@@ -177,6 +177,15 @@ def voice_support_status():
     return True, ""
 
 
+def bool_param(value):
+    """Parse ROS/launch boolean values that may arrive as bool, number, or string."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def record_audio_pyaudio(duration=3, rate=16000, chunk=1024):
     """Capture audio from the default microphone and return WAV bytes."""
     if pyaudio is None:
@@ -520,6 +529,8 @@ class WhitePointGUI(Node):
 
         # 可配置的相機 color topic（由 launch 檔根據 CAMERA 變數自動設定）
         self.declare_parameter('color_topic', '')
+        self.declare_parameter('require_point_confirmation', True)
+        self.declare_parameter('point_confirmation_timeout_sec', 3.0)
         color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
         self.get_logger().info(f'Subscribing to color topic: {color_topic}')
 
@@ -754,6 +765,13 @@ class MainWindow(QMainWindow):
         self.llm_auto_retry_count = 0      # 目前點已自動嘗試次數
         self.llm_auto_max_retries = 1      # 每個點最多自動嘗試次數（含第一次）
         self.llm_waiting_second_point = False  # 按下 Yes 後等待進入 waiting_second_point
+        self.require_point_confirmation = bool_param(
+            self.ros_node.get_parameter('require_point_confirmation').value
+        )
+        self.point_confirmation_timeout_sec = max(
+            0.0,
+            float(self.ros_node.get_parameter('point_confirmation_timeout_sec').value)
+        )
         
         # 初始化 conversation state
         if default_conversation is not None:
@@ -1025,7 +1043,7 @@ class MainWindow(QMainWindow):
         )
     
     def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual"):
-        """依照階段要求，先詢問確認再發布像素點"""
+        """依照階段要求確認後發布像素點；可用 ROS 參數略過或設定逾時自動 Yes。"""
         if self.current_image is None:
             self.output_text.append(
                 "<b style='color: #F44336;'>錯誤:</b> 尚未收到相機影像，無法選點。"
@@ -1057,13 +1075,12 @@ class MainWindow(QMainWindow):
         if source == "manual":
             self.append_manual_selection_output(x, y)
 
-        reply = QMessageBox.question(
-            self,
-            "模型建議點",
-            f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
+        if self.require_point_confirmation:
+            reply = self._ask_point_confirmation(
+                f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？"
+            )
+        else:
+            reply = QMessageBox.Yes
 
         if reply != QMessageBox.Yes:
             # 若是 LLM 推薦的點被拒絕，且還有剩餘重試次數，自動重新推論
@@ -1077,6 +1094,26 @@ class MainWindow(QMainWindow):
         self.ros_node.publish_pixel(x, y)
         if source in ("llm", "llm_adjusted") and self.selection_phase == "select_first_point":
             self.llm_waiting_second_point = True
+
+    def _ask_point_confirmation(self, text: str):
+        box = QMessageBox(self)
+        box.setWindowTitle("模型建議點")
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.Yes)
+
+        timer = None
+        timeout_ms = int(self.point_confirmation_timeout_sec * 1000)
+        if timeout_ms > 0:
+            timer = QTimer(box)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: box.done(QMessageBox.Yes))
+            timer.start(timeout_ms)
+
+        reply = box.exec_()
+        if timer is not None and timer.isActive():
+            timer.stop()
+        return reply
 
     def send_user_input(self):
         """發送使用者輸入並查詢 LLM"""
