@@ -277,7 +277,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'controller_url',
-            default_value='http://10.0.0.30:11000',
+            default_value='http://192.168.0.70:11000',
             description='Controller URL for VLPoint server',
         ),
         DeclareLaunchArgument(

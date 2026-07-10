@@ -321,7 +321,7 @@ class LLMWorkerThread(QThread):
     controller_connected = pyqtSignal(str)
     worker_processing = pyqtSignal()
 
-    def __init__(self, controller_url="http://10.0.0.1:11000"):
+    def __init__(self, controller_url="http://10.0.0.30:11000"):
         super().__init__()
         self.controller_url = controller_url
         self.request_data = None
@@ -494,7 +494,7 @@ class WhitePointGUIStandalone(Node):
 # ══════════════════════════════════════════════════════════════════════════════
 class MainWindow(QMainWindow):
     def __init__(self, ros_node, signal_bridge,
-                 controller_url="http://10.0.0.1:11000",
+                 controller_url="http://10.0.0.30:11000",
                  model_path="PME033541/vla13"):
         super().__init__()
         self.ros_node = ros_node
@@ -1056,7 +1056,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(
         description="White Point GUI — Standalone / Offline Test Mode"
     )
-    parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000",
+    parser.add_argument("--controller-url", type=str, default="http://10.0.0.30:11000",
                         help="LLM controller URL")
     parser.add_argument("--model-path", type=str, default="PME033541/vla13",
                         help="Model path")

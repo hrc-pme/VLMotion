@@ -81,6 +81,14 @@ def launch_setup(context, *args, **kwargs):
     use_compressed_color = LaunchConfiguration('use_compressed_color').perform(context)
     require_point_confirmation = LaunchConfiguration('require_point_confirmation').perform(context)
     point_confirmation_timeout_sec = LaunchConfiguration('point_confirmation_timeout_sec').perform(context)
+    enable_d405_view = LaunchConfiguration('enable_d405_view').perform(context)
+    d405_camera_name = LaunchConfiguration('d405_camera_name').perform(context)
+    d405_serial_no = LaunchConfiguration('d405_serial_no').perform(context)
+    d405_topic_prefix = LaunchConfiguration('d405_topic_prefix').perform(context)
+    d405_camera_frame = LaunchConfiguration('d405_camera_frame').perform(context)
+    d405_profile = LaunchConfiguration('d405_profile').perform(context)
+    d405_use_compressed_color = LaunchConfiguration('d405_use_compressed_color').perform(context)
+    d405_rotate_display = LaunchConfiguration('d405_rotate_display').perform(context)
 
     cam = load_camera_config(camera_name)
     cal = load_calibration_defaults(camera_name)
@@ -95,11 +103,25 @@ def launch_setup(context, *args, **kwargs):
     color_topic = f'{prefix}/color/image_raw/compressed' if use_compressed else f'{prefix}/color/image_raw'
     depth_topic = f'{prefix}/aligned_depth_to_color/image_raw'
     camera_info_topic = f'{prefix}/color/camera_info'
+    d405_enabled = str(enable_d405_view).lower() in ('1', 'true', 'yes', 'on')
+    d405_use_compressed = str(d405_use_compressed_color).lower() in ('1', 'true', 'yes', 'on')
+    d405_color_topic = (
+        f'{d405_topic_prefix}/color/image_raw/compressed'
+        if d405_use_compressed
+        else f'{d405_topic_prefix}/color/image_raw'
+    )
+    d405_depth_topic = f'{d405_topic_prefix}/aligned_depth_to_color/image_raw'
+    d405_camera_info_topic = f'{d405_topic_prefix}/color/camera_info'
 
     print(f'[white_point_direct_pipeline] camera: {camera_name}')
     print(f'  color topic:  {color_topic}')
     print(f'  depth topic:  {depth_topic}')
     print(f'  camera frame: {optical_frame}')
+    if d405_enabled:
+        print('[white_point_direct_pipeline] D405 second-point view enabled')
+        print(f'  D405 color topic:  {d405_color_topic}')
+        print(f'  D405 depth topic:  {d405_depth_topic}')
+        print(f'  D405 camera frame: {d405_camera_frame}')
     print('  motion node:  white_point_pipeline.white_point_direct_motion')
 
     nodes = []
@@ -183,6 +205,32 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
     ))
 
+    if d405_enabled:
+        nodes.append(Node(
+            package='realsense2_camera',
+            executable='realsense2_camera_node',
+            name=d405_camera_name,
+            namespace='',
+            parameters=[{
+                'camera_name': d405_camera_name,
+                'serial_no': d405_serial_no,
+                'enable_color': True,
+                'enable_depth': True,
+                'align_depth.enable': True,
+                'align_depth': True,
+                'depth_module.profile': d405_profile,
+                'rgb_camera.profile': d405_profile,
+                'color0.enable_auto_exposure': True,
+                'color0.auto_exposure_priority': True,
+                'publish_tf': True,
+                'tf_publish_rate': 0.0,
+                'pointcloud.enable': True,
+                'pointcloud.stream_filter': 2,
+                'pointcloud.allow_no_texture_points': False,
+            }],
+            output='screen',
+        ))
+
     nodes.append(Node(
         package='white_point_pipeline',
         executable='white_point_gui',
@@ -193,6 +241,9 @@ def launch_setup(context, *args, **kwargs):
             'depth_topic': depth_topic,
             'camera_info_topic': camera_info_topic,
             'camera_frame': optical_frame,
+            'secondary_color_topic': d405_color_topic if d405_enabled else '',
+            'secondary_rotate_display': str(d405_rotate_display).lower() in ('1', 'true', 'yes', 'on'),
+            'secondary_pixel_topic': '/white_point_pixel_d405',
             'require_point_confirmation': str(require_point_confirmation).lower() in ('1', 'true', 'yes', 'on'),
             'point_confirmation_timeout_sec': float(point_confirmation_timeout_sec),
         }],
@@ -211,8 +262,26 @@ def launch_setup(context, *args, **kwargs):
             'depth_topic': depth_topic,
             'camera_info_topic': camera_info_topic,
             'camera_frame': optical_frame,
+            'rotate_display': True,
         }],
     ))
+
+    if d405_enabled:
+        nodes.append(Node(
+            package='white_point_pipeline',
+            executable='white_point_to_3d',
+            name='white_point_to_3d_d405',
+            output='screen',
+            parameters=[{
+                'depth_topic': d405_depth_topic,
+                'camera_info_topic': d405_camera_info_topic,
+                'camera_frame': d405_camera_frame,
+                'rotate_display': str(d405_rotate_display).lower() in ('1', 'true', 'yes', 'on'),
+            }],
+            remappings=[
+                ('/white_point_pixel', '/white_point_pixel_d405'),
+            ],
+        ))
 
     nodes.append(ExecuteProcess(
         cmd=[
@@ -259,7 +328,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'controller_url',
-            default_value='http://10.0.0.30:11000',
+            default_value='http://192.168.0.70:11000',
             description='Controller URL for VLPoint server',
         ),
         DeclareLaunchArgument(
@@ -271,6 +340,46 @@ def generate_launch_description():
             'use_compressed_color',
             default_value='true',
             description='Use compressed color topic for GUI (/color/image_raw/compressed)',
+        ),
+        DeclareLaunchArgument(
+            'enable_d405_view',
+            default_value='true',
+            description='Show D405 image in the GUI and use it for the second point selection.',
+        ),
+        DeclareLaunchArgument(
+            'd405_camera_name',
+            default_value='gripper_camera',
+            description='RealSense camera_name for the D405.',
+        ),
+        DeclareLaunchArgument(
+            'd405_serial_no',
+            default_value='218622277570',
+            description='D405 serial number.',
+        ),
+        DeclareLaunchArgument(
+            'd405_topic_prefix',
+            default_value='/gripper_camera',
+            description='D405 ROS topic prefix.',
+        ),
+        DeclareLaunchArgument(
+            'd405_camera_frame',
+            default_value='gripper_camera_color_optical_frame',
+            description='D405 color optical frame.',
+        ),
+        DeclareLaunchArgument(
+            'd405_profile',
+            default_value='640x480x30',
+            description='D405 color/depth profile.',
+        ),
+        DeclareLaunchArgument(
+            'd405_use_compressed_color',
+            default_value='false',
+            description='Use compressed D405 color topic in the GUI.',
+        ),
+        DeclareLaunchArgument(
+            'd405_rotate_display',
+            default_value='false',
+            description='Rotate the D405 GUI view 90 degrees clockwise.',
         ),
         DeclareLaunchArgument(
             'require_point_confirmation',

@@ -60,14 +60,17 @@ class WhitePointTo3D(Node):
         self.declare_parameter('depth_topic', '')
         self.declare_parameter('camera_info_topic', '')
         self.declare_parameter('camera_frame', '')
+        self.declare_parameter('rotate_display', True)
 
         depth_topic = self.get_parameter('depth_topic').get_parameter_value().string_value
         camera_info_topic = self.get_parameter('camera_info_topic').get_parameter_value().string_value
         self.camera_frame = self.get_parameter('camera_frame').get_parameter_value().string_value
+        self.rotate_display = bool(self.get_parameter('rotate_display').value)
 
         self.get_logger().info(f'Camera depth topic: {depth_topic}')
         self.get_logger().info(f'Camera info topic: {camera_info_topic}')
         self.get_logger().info(f'Camera frame: {self.camera_frame}')
+        self.get_logger().info(f'GUI rotate_display: {self.rotate_display}')
 
         # 對齊到 color 的深度 + color 內參
         self.depth_sub = self.create_subscription(
@@ -507,17 +510,21 @@ class WhitePointTo3D(Node):
         H = self.depth_image.shape[0]
         W = self.depth_image.shape[1]
 
-        # GUI 顯示的 pixel（已旋轉：cv2.ROTATE_90_CLOCKWISE）
-        u_rot = int(msg.x)
-        v_rot = int(msg.y)
+        # GUI 顯示的 pixel。主相機舊流程會旋轉 90 度；D405 第二畫面預設不旋轉。
+        u_display = int(msg.x)
+        v_display = int(msg.y)
 
-        # 逆旋轉對應：原圖 (u, v) -> 旋轉後 (u_r, v_r) = (H-1-v, u)
-        # 反推：u = v_r, v = H-1-u_r
-        u = v_rot
-        v = H - 1 - u_rot
+        if self.rotate_display:
+            # 逆旋轉對應：原圖 (u, v) -> 旋轉後 (u_r, v_r) = (H-1-v, u)
+            # 反推：u = v_r, v = H-1-u_r
+            u = v_display
+            v = H - 1 - u_display
+        else:
+            u = u_display
+            v = v_display
 
         if v < 0 or v >= H or u < 0 or u >= W:
-            self.get_logger().warn(f'Pixel out of range after unrotate: u={u}, v={v}')
+            self.get_logger().warn(f'Pixel out of range after display transform: u={u}, v={v}')
             return
 
         # 9 點補插深度（回傳的是原始 depth buffer 數值）
@@ -580,10 +587,8 @@ class WhitePointTo3D(Node):
                     timeout=RclpyDuration(seconds=0.1)
                 )
             pt_base = do_transform_point(pt_cam, tf)
-
-            self.point_pub.publish(pt_base)
             self.get_logger().info(
-                f'BASE frame: Xb={pt_base.point.x:.3f}, '
+                f'BASE frame raw: Xb={pt_base.point.x:.3f}, '
                 f'Yb={pt_base.point.y:.3f}, Zb={pt_base.point.z:.3f}'
             )
 
@@ -721,6 +726,12 @@ class WhitePointTo3D(Node):
                     self.get_logger().warn(f'DBSCAN clustering failed or too few points')
             else:
                 self.get_logger().warn(f'Patch points too few: {len(pts_base)} < {self.min_plane_pts}')
+
+            self.point_pub.publish(pt_base)
+            self.get_logger().info(
+                f'Published target: Xb={pt_base.point.x:.3f}, '
+                f'Yb={pt_base.point.y:.3f}, Zb={pt_base.point.z:.3f}'
+            )
         except Exception as e:
             # 若時間戳查詢失敗（啟動初期/TF cache不足），退回 latest 以維持流程可用。
             if tf_time is not None:

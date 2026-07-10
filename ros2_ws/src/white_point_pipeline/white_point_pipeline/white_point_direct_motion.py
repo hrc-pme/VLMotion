@@ -241,6 +241,12 @@ class WhitePointDirectMotion(Node):
             self.joint_state_callback,
             10,
         )
+        self.user_input_sub = self.create_subscription(
+            String,
+            '/user_input',
+            self.user_input_callback,
+            10,
+        )
 
         self.timer = self.create_timer(0.05, self.control_loop)
         self.phase_timer = self.create_timer(1.0, self.publish_phase)
@@ -281,6 +287,29 @@ class WhitePointDirectMotion(Node):
             'white_point_direct_motion ready. It uses a direct two-stage approach point flow; '
             'do not run it at the same time as white_point_full_motion.'
         )
+
+    def user_input_callback(self, msg):
+        text = (msg.data or '').strip().lower()
+        if text in ('stop', 'halt', '停止', '停') or any(token in text.split() for token in ('stop', 'halt')):
+            self.emergency_stop('user_input')
+
+    def emergency_stop(self, source='manual'):
+        self.stop_base()
+        for goal_handle in (self.wrist_goal_handle, self.lift_goal_handle, self.arm_goal_handle):
+            try:
+                if goal_handle is not None:
+                    goal_handle.cancel_goal_async()
+            except Exception:
+                pass
+        self.target_world = None
+        self.approach_world = None
+        self.side_reach_base_world = None
+        self.end_effector_plan = None
+        self.second_target_locked = False
+        self.wrist_contact_pose_sent = False
+        self.phase = 'idle'
+        self.reset_action_state()
+        self.get_logger().warn(f'Emergency stop from {source}: base stopped and motion state reset.')
 
     def axis_callback(self, msg):
         self.panel_axis_base = float(msg.data)

@@ -111,7 +111,7 @@ from PIL import Image as PILImage, ImageDraw
 # 現在才導入 PyQt5
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTextEdit, QLineEdit, QPushButton, QSplitter, QMessageBox
+    QLabel, QTextEdit, QLineEdit, QPushButton, QSplitter
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QObject
 from PyQt5.QtGui import QImage, QPixmap, QFont
@@ -343,17 +343,17 @@ class ServerProcess:
     def __init__(self):
         self.controller_process = None
         self.model_worker_process = None
-        self.controller_url = "http://10.0.0.30:11000"
+        self.controller_url = "http://192.168.0.70:11000"
 
     def start_controller(self, host="0.0.0.0", port=11000):
         """啟動 Controller"""
         cmd = [sys.executable, "-m", "point.serve.controller", "--host", host, "--port", str(port)]
         print(f"Starting controller: {' '.join(cmd)}")
         self.controller_process = subprocess.Popen(cmd)
-        self.controller_url = f"http://{('10.0.0.30' if host in ['0.0.0.0', '::'] else host)}:{port}"
+        self.controller_url = f"http://{('192.168.0.70' if host in ['0.0.0.0', '::'] else host)}:{port}"
 
-    def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.30:11000",
-                           port=22000, worker_url="http://10.0.0.30:22000",
+    def start_model_worker(self, host="0.0.0.0", controller_url="http://192.168.0.70:11000",
+                           port=22000, worker_url="http://192.168.0.70:22000",
                            model_path="PME033541/vla13", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
@@ -387,7 +387,7 @@ class LLMWorkerThread(QThread):
     controller_connected = pyqtSignal(str)  # 發送 worker 地址
     worker_processing = pyqtSignal()  # Worker 開始處理
     
-    def __init__(self, controller_url="http://10.0.0.30:11000"):
+    def __init__(self, controller_url="http://192.168.0.70:11000"):
         super().__init__()
         self.controller_url = controller_url
         self.request_data = None
@@ -449,6 +449,7 @@ class LLMWorkerThread(QThread):
 class ROSSignalBridge(QObject):
     """Qt 信號橋接器"""
     image_signal = pyqtSignal(object)
+    secondary_image_signal = pyqtSignal(object)
     model_output_signal = pyqtSignal(str)
     point3d_signal = pyqtSignal(float, float, float)
     selection_phase_signal = pyqtSignal(str)
@@ -529,9 +530,17 @@ class WhitePointGUI(Node):
 
         # 可配置的相機 color topic（由 launch 檔根據 CAMERA 變數自動設定）
         self.declare_parameter('color_topic', '')
+        self.declare_parameter('secondary_color_topic', '')
+        self.declare_parameter('secondary_rotate_display', False)
+        self.declare_parameter('secondary_pixel_topic', '/white_point_pixel_d405')
         self.declare_parameter('require_point_confirmation', True)
         self.declare_parameter('point_confirmation_timeout_sec', 3.0)
         color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
+        secondary_color_topic = self.get_parameter('secondary_color_topic').get_parameter_value().string_value
+        self.secondary_rotate_display = bool_param(
+            self.get_parameter('secondary_rotate_display').value
+        )
+        self.secondary_pixel_topic = self.get_parameter('secondary_pixel_topic').get_parameter_value().string_value
         self.get_logger().info(f'Subscribing to color topic: {color_topic}')
 
         # 訂閱顏色影像（支援 raw / compressed）
@@ -552,8 +561,28 @@ class WhitePointGUI(Node):
             )
             self.get_logger().info('Color transport mode: raw')
 
+        self.secondary_image_sub = None
+        if secondary_color_topic:
+            if secondary_color_topic.endswith('/compressed'):
+                self.secondary_image_sub = self.create_subscription(
+                    CompressedImage,
+                    secondary_color_topic,
+                    self.secondary_compressed_image_callback,
+                    10
+                )
+                self.get_logger().info(f'Subscribing to secondary compressed color topic: {secondary_color_topic}')
+            else:
+                self.secondary_image_sub = self.create_subscription(
+                    Image,
+                    secondary_color_topic,
+                    self.secondary_image_callback,
+                    10
+                )
+                self.get_logger().info(f'Subscribing to secondary raw color topic: {secondary_color_topic}')
+
         # 發布點擊像素
         self.pixel_pub = self.create_publisher(Point, '/white_point_pixel', 10)
+        self.secondary_pixel_pub = self.create_publisher(Point, self.secondary_pixel_topic, 10)
 
         # 訂閱 3D 座標（base_link frame）
         self.point3d_sub = self.create_subscription(
@@ -662,6 +691,23 @@ class WhitePointGUI(Node):
         cv_image = rotate_img_90(cv_image)
         self.signal_bridge.image_signal.emit(cv_image)
 
+    def secondary_image_callback(self, msg: Image):
+        """接收第二相機影像並發送信號到 Qt GUI"""
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        if self.secondary_rotate_display:
+            cv_image = rotate_img_90(cv_image)
+        self.signal_bridge.secondary_image_signal.emit(cv_image)
+
+    def secondary_compressed_image_callback(self, msg: CompressedImage):
+        """接收第二相機壓縮影像並發送信號到 Qt GUI"""
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if cv_image is None:
+            return
+        if self.secondary_rotate_display:
+            cv_image = rotate_img_90(cv_image)
+        self.signal_bridge.secondary_image_signal.emit(cv_image)
+
     def point3d_callback(self, msg: PointStamped):
         """接收 3D 座標"""
         self.last_3d = (msg.point.x, msg.point.y, msg.point.z)
@@ -695,14 +741,18 @@ class WhitePointGUI(Node):
             self.signal_bridge.voice_input_signal.emit(text)
             self.get_logger().info(f"Voice input received: {text}")
 
-    def publish_pixel(self, x: int, y: int):
+    def publish_pixel(self, x: int, y: int, camera_key: str = "primary"):
         """發布點擊的像素座標"""
         self.last_click = (x, y)
         pt = Point()
         pt.x = float(x)
         pt.y = float(y)
-        self.pixel_pub.publish(pt)
-        self.get_logger().info(f'Clicked pixel: u={x}, v={y}')
+        if camera_key == "secondary":
+            self.secondary_pixel_pub.publish(pt)
+            self.get_logger().info(f'Clicked secondary pixel: u={x}, v={y}, topic={self.secondary_pixel_topic}')
+        else:
+            self.pixel_pub.publish(pt)
+            self.get_logger().info(f'Clicked primary pixel: u={x}, v={y}')
 
     # ── 深度 / 相機內參 callback（給多點選擇使用）──
     def _depth_callback_node(self, msg: Image):
@@ -763,7 +813,7 @@ class WhitePointGUI(Node):
 
 class MainWindow(QMainWindow):
     """主視窗"""
-    def __init__(self, ros_node, signal_bridge, controller_url="http://10.0.0.30:11000", 
+    def __init__(self, ros_node, signal_bridge, controller_url="http://192.168.0.70:11000", 
                  model_path="PME033541/vla13"):
         super().__init__()
         self.ros_node = ros_node
@@ -776,6 +826,10 @@ class MainWindow(QMainWindow):
         # LLM 相關狀態
         self.llm_worker = None  # 每次請求時創建新的 worker
         self.current_image = None
+        self.primary_current_image = None
+        self.secondary_current_image = None
+        self.primary_last_click = None
+        self.secondary_last_click = None
         self.llm_points = []  # 儲存 LLM 解析出的點
         self.conversation_state = None  # 對話狀態（用於管理影像和提示）
         
@@ -784,14 +838,6 @@ class MainWindow(QMainWindow):
         self.llm_auto_retry_count = 0      # 目前點已自動嘗試次數
         self.llm_auto_max_retries = 1      # 每個點最多自動嘗試次數（含第一次）
         self.llm_waiting_second_point = False  # 按下 Yes 後等待進入 waiting_second_point
-        self.require_point_confirmation = bool_param(
-            self.ros_node.get_parameter('require_point_confirmation').value
-        )
-        self.point_confirmation_timeout_sec = max(
-            0.0,
-            float(self.ros_node.get_parameter('point_confirmation_timeout_sec').value)
-        )
-        
         # 初始化 conversation state
         if default_conversation is not None:
             self.conversation_state = default_conversation.copy()
@@ -835,9 +881,23 @@ class MainWindow(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         
+        self.primary_camera_title = QLabel("D435i")
+        self.primary_camera_title.setAlignment(Qt.AlignCenter)
+        self.primary_camera_title.setFont(QFont("Arial", 12, QFont.Bold))
+        left_layout.addWidget(self.primary_camera_title)
+
         self.image_label = ImageLabel()
-        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setMinimumSize(400, 260)
         left_layout.addWidget(self.image_label)
+
+        self.secondary_camera_title = QLabel("D405")
+        self.secondary_camera_title.setAlignment(Qt.AlignCenter)
+        self.secondary_camera_title.setFont(QFont("Arial", 12, QFont.Bold))
+        left_layout.addWidget(self.secondary_camera_title)
+
+        self.secondary_image_label = ImageLabel()
+        self.secondary_image_label.setMinimumSize(400, 260)
+        left_layout.addWidget(self.secondary_image_label)
         
         # 服務狀態顯示
         self.service_status = QLabel("Controller: Not Connected | Worker: Not Connected")
@@ -947,6 +1007,7 @@ class MainWindow(QMainWindow):
         """連接信號與槽"""
         # ROS2 信號（透過 signal_bridge）
         self.signal_bridge.image_signal.connect(self.update_image)
+        self.signal_bridge.secondary_image_signal.connect(self.update_secondary_image)
         self.signal_bridge.model_output_signal.connect(self.add_model_output)
         self.signal_bridge.point3d_signal.connect(self.update_3d_coord)
         self.signal_bridge.selection_phase_signal.connect(self.update_selection_phase)
@@ -955,6 +1016,7 @@ class MainWindow(QMainWindow):
         
         # Qt 信號
         self.image_label.clicked.connect(self.on_image_clicked)
+        self.secondary_image_label.clicked.connect(self.on_secondary_image_clicked)
         self.send_button.clicked.connect(self.send_user_input)
         self.input_field.returnPressed.connect(self.send_user_input)
         self.voice_button.clicked.connect(self.handle_voice_button)
@@ -966,11 +1028,21 @@ class MainWindow(QMainWindow):
 
     def update_image(self, cv_image):
         """更新顯示的影像，並保存用於 LLM"""
-        # 保存當前影像供 LLM 使用
-        self.current_image = cv_image.copy()
-        
-        # 不在即時畫面上標註 LLM 的點，只顯示原始影像
+        self.primary_current_image = cv_image.copy()
+        self.current_image = self.primary_current_image.copy()
         self.image_label.set_image(cv_image)
+
+    def update_secondary_image(self, cv_image):
+        """更新 D405 影像，第二次選點會在這張圖上顯示。"""
+        self.secondary_current_image = cv_image.copy()
+        self.secondary_image_label.set_image(cv_image)
+
+    def active_camera_key(self):
+        if self.selection_phase == "select_first_point":
+            return "primary"
+        if self.selection_phase in ("waiting_second_point", "moving_to_target"):
+            return "secondary"
+        return None
 
     def add_model_output(self, text: str):
         """添加模型輸出到文字區域"""
@@ -987,18 +1059,25 @@ class MainWindow(QMainWindow):
 
     def on_image_clicked(self, x: int, y: int):
         """處理影像點擊事件"""
+        if self.active_camera_key() != "primary":
+            return
         if self.llm_points:
-            # 有 LLM 推論點時：替換最近的點並顯示完整預覽
             self._replace_nearest_llm_point(x, y)
-            self.confirm_and_publish_pixel(x, y, source="llm_adjusted")
+            self.confirm_and_publish_pixel(x, y, source="llm_adjusted", camera_key="primary")
         else:
-            self.confirm_and_publish_pixel(x, y, source="manual")
+            self.confirm_and_publish_pixel(x, y, source="manual", camera_key="primary")
+
+    def on_secondary_image_clicked(self, x: int, y: int):
+        """處理 D405 影像點擊事件。"""
+        if self.active_camera_key() != "secondary":
+            return
+        self.confirm_and_publish_pixel(x, y, source="manual", camera_key="secondary")
     
     def phase_to_text(self, phase: str):
         mapping = {
-            "select_first_point": "請選第一個點（點選後會詢問確認）",
+            "select_first_point": "請在 D435i 畫面選第一個點",
             "moving_to_approach": "前往準備點中（暫不接受點選）",
-            "waiting_second_point": "已到準備點，請選第二個點（點選後會詢問確認，並再次調整高度）",
+            "waiting_second_point": "已到準備點，請在 D405 畫面選第二個點",
             "moving_to_target": "前往目標點中（可重新點選覆蓋目標）",
         }
         return mapping.get(phase, f"未知階段：{phase}")
@@ -1008,6 +1087,10 @@ class MainWindow(QMainWindow):
         if not phase:
             return
         self.selection_phase = phase
+        if self.primary_current_image is not None:
+            self.current_image = self.primary_current_image.copy()
+        self.primary_camera_title.setText("D435i")
+        self.secondary_camera_title.setText("D405")
         # 當進入 waiting_second_point 且是由 LLM 選點觸發時，自動重送相同輸入
         if phase == "waiting_second_point" and self.llm_waiting_second_point:
             self.llm_waiting_second_point = False
@@ -1074,9 +1157,10 @@ class MainWindow(QMainWindow):
             self.output_text.verticalScrollBar().maximum()
         )
     
-    def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual"):
+    def confirm_and_publish_pixel(self, x: int, y: int, source: str = "manual", camera_key: str = "primary"):
         """依照階段要求確認後發布像素點；可用 ROS 參數略過或設定逾時自動 Yes。"""
-        if self.current_image is None:
+        active_image = self.secondary_current_image if camera_key == "secondary" else self.primary_current_image
+        if active_image is None:
             self.output_text.append(
                 "<b style='color: #F44336;'>錯誤:</b> 尚未收到相機影像，無法選點。"
             )
@@ -1084,68 +1168,31 @@ class MainWindow(QMainWindow):
 
         allowed_phases = {"select_first_point", "waiting_second_point", "moving_to_target"}
         if self.selection_phase not in allowed_phases:
-            self.output_text.append(
-                f"<b style='color: #FF9800;'>提示:</b> 目前階段為「{self.phase_to_text(self.selection_phase)}」，暫不接受新點。"
-            )
             return
 
-        is_second = (self.selection_phase == "waiting_second_point")
-        is_retarget = (self.selection_phase == "moving_to_target")
-        if is_retarget:
-            ordinal = "重新指定"
-        else:
-            ordinal = "第二次" if is_second else "第一次"
-        
         # 計算標準化座標（0~1）用於顯示
-        h_img, w_img = self.current_image.shape[:2]
+        h_img, w_img = active_image.shape[:2]
         nx = x / w_img
         ny = y / h_img
-        source_text = "模型建議點"
 
-        # 手動點選時：在按 Yes/No 前先顯示到 Output
+        # 手動點選時：只記錄到 Output，不彈確認視窗。
         # llm_adjusted 已在 _replace_nearest_llm_point 中顯示完整點集，不重複顯示
         if source == "manual":
+            self.current_image = active_image.copy()
             self.append_manual_selection_output(x, y)
 
-        if self.require_point_confirmation:
-            reply = self._ask_point_confirmation(
-                f"{source_text}\n座標: ({nx:.4f}, {ny:.4f})\n\n要選擇這個{ordinal}點嗎？"
-            )
+        # 直接發布像素；若需要停止，輸入 stop 由 motion node 處理。
+        if camera_key == "secondary":
+            self.secondary_last_click = (x, y)
         else:
-            reply = QMessageBox.Yes
-
-        if reply != QMessageBox.Yes:
-            # 若是 LLM 推薦的點被拒絕，且還有剩餘重試次數，自動重新推論
-            if source == "llm" and self.last_llm_text is not None:
-                if self.llm_auto_retry_count < self.llm_auto_max_retries:
-                    self.llm_auto_retry_count += 1
-                    QTimer.singleShot(300, self._resend_to_llm)
-            return
-
-        # 按下 Yes：發布像素，並若為 LLM 選點則設旗標等待第二點
-        self.ros_node.publish_pixel(x, y)
-        if source in ("llm", "llm_adjusted") and self.selection_phase == "select_first_point":
+            self.primary_last_click = (x, y)
+        self.ros_node.publish_pixel(x, y, camera_key=camera_key)
+        if (
+            self.selection_phase == "select_first_point"
+            and self.last_llm_text is not None
+            and camera_key == "primary"
+        ):
             self.llm_waiting_second_point = True
-
-    def _ask_point_confirmation(self, text: str):
-        box = QMessageBox(self)
-        box.setWindowTitle("模型建議點")
-        box.setText(text)
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.Yes)
-
-        timer = None
-        timeout_ms = int(self.point_confirmation_timeout_sec * 1000)
-        if timeout_ms > 0:
-            timer = QTimer(box)
-            timer.setSingleShot(True)
-            timer.timeout.connect(lambda: box.done(QMessageBox.Yes))
-            timer.start(timeout_ms)
-
-        reply = box.exec_()
-        if timer is not None and timer.isActive():
-            timer.stop()
-        return reply
 
     def on_external_voice_input(self, text: str):
         """Use Unity /voice_input exactly like text entered and sent in the GUI."""
@@ -1204,12 +1251,14 @@ class MainWindow(QMainWindow):
         if is_control_keyword:
             return
         
-        # 取得當前影像（使用按下 Enter 時的影像）
+        # LLM 推理一律使用 D435i 畫面；第二階段只把實際點選切到 D405。
         image = None
-        if self.current_image is not None:
+        inference_image = self.primary_current_image
+        if inference_image is not None:
             try:
+                self.current_image = inference_image.copy()
                 # 轉換 BGR 到 RGB 並建立 PIL Image
-                rgb = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+                rgb = cv2.cvtColor(inference_image, cv2.COLOR_BGR2RGB)
                 image = PILImage.fromarray(rgb)
             except Exception as e:
                 print(f"Failed to convert image: {e}", file=sys.stderr)
@@ -1240,13 +1289,15 @@ class MainWindow(QMainWindow):
     
     def _resend_to_llm(self):
         """使用當前影像重新發送最後一次的 LLM 輸入（自動重試或第二點觸發）"""
-        if not self.last_llm_text or self.current_image is None:
+        inference_image = self.primary_current_image
+        if not self.last_llm_text or inference_image is None:
             self.output_text.append(
-                "<b style='color: #F44336;'>錯誤:</b> 無法自動重試，缺少輸入文字或影像。"
+                "<b style='color: #F44336;'>錯誤:</b> 無法自動重試，缺少輸入文字或 D435i 影像。"
             )
             return
         try:
-            rgb = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            self.current_image = inference_image.copy()
+            rgb = cv2.cvtColor(inference_image, cv2.COLOR_BGR2RGB)
             image = PILImage.fromarray(rgb)
         except Exception as e:
             self.output_text.append(f"<b style='color: #F44336;'>錯誤:</b> 無法取得影像: {e}")
@@ -1402,13 +1453,18 @@ class MainWindow(QMainWindow):
             except Exception as _e:
                 print(f"Failed to save result image: {_e}", file=sys.stderr)
 
+            # 第二階段的推理影像仍是 D435i；實際第二點必須在 D405 畫面選。
+            active_camera = self.active_camera_key()
+            if active_camera == "secondary":
+                return
+
             # 選出最佳點後發布（單點直接用，多點在 pixel 階段選最右下角）
             if len(self.llm_points) == 1:
                 px, py = self.llm_points[0]
-                self.confirm_and_publish_pixel(int(px), int(py), source="llm")
+                self.confirm_and_publish_pixel(int(px), int(py), source="llm", camera_key=active_camera)
             elif len(self.llm_points) > 1:
                 best_px, best_py = self._select_best_pixel(self.llm_points)
-                self.confirm_and_publish_pixel(int(best_px), int(best_py), source="llm")
+                self.confirm_and_publish_pixel(int(best_px), int(best_py), source="llm", camera_key=active_camera)
 
     # ------------------------------------------------------------------
     # 手動選點替換：將最靠近手動點的 LLM 推論點替換，並顯示完整點集預覽
@@ -1664,7 +1720,7 @@ def main(args=None):
     
     # 解析命令列參數
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
-    parser.add_argument("--controller-url", type=str, default="http://10.0.0.30:11000",
+    parser.add_argument("--controller-url", type=str, default="http://192.168.0.70:11000",
                        help="LLM controller URL")
     parser.add_argument("--model-path", type=str, default="PME033541/vla13",
                        help="Model path to load in the GUI")
