@@ -64,6 +64,12 @@ class ModelArguments:
     mm_use_im_patch_token: bool = field(default=True)
     mm_patch_merge_type: Optional[str] = field(default='flat')
     mm_vision_select_feature: Optional[str] = field(default="patch")
+    mm_use_sam3_conditioning: bool = field(default=False)
+    mm_sam3_vision_tower: Optional[str] = field(default=None)
+    mm_sam3_blend_alpha: float = field(default=0.35)
+    mm_sam3_mask_gamma: float = field(default=1.0)
+    mm_sam3_device: str = field(default="cpu")
+    mm_sam3_dtype: str = field(default="auto")
 
 
 @dataclass

@@ -28,6 +28,14 @@ VLMotion/
 
 ## Installation and Setup
 
+**Clone Repository**
+```bash
+git clone git@github.com:hrc-pme/VLMotion.git
+cd VLMotion
+ ```
+
+SSH access to the hrc-pme/VLMotion repository must be configured on the local machine before cloning.
+
 ### Method 1: Using Docker (Recommended)
 
 1. **Build Docker Image**

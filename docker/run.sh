@@ -79,18 +79,17 @@ docker exec -u root "${CONTAINER_NAME}" bash -c '
 
 echo "進入容器: ${CONTAINER_NAME}"
 if [[ -n "${DOMAIN_ID}" ]]; then
-  echo "會在容器內套用 ROS_DOMAIN_ID=${DOMAIN_ID}（若 /workspace/environment.sh 存在）"
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  fi
+  RUNTIME_DOMAIN_ID="${DOMAIN_ID}"
 else
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash
-  fi
+  # 若使用者未指定，沿用容器內已設定值，最後 fallback 到 0
+  RUNTIME_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+fi
+
+echo "會在容器內自動 source /workspace/environment.sh（ROS_DOMAIN_ID=${RUNTIME_DOMAIN_ID}）"
+if [[ -n "${EXEC_USER}" ]]; then
+  exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash -lc \
+    "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${RUNTIME_DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
+else
+  exec docker exec -it "${CONTAINER_NAME}" bash -lc \
+    "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${RUNTIME_DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
 fi

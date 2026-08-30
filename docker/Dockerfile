@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     software-properties-common \
     libasound2-dev \
+    portaudio19-dev \
+    python3-pyaudio \
+    pkg-config \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
     ffmpeg \
     libsm6 \
     libxext6 \
@@ -72,7 +77,7 @@ ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     ROS_DISTRO=humble \
     YOLO_CONFIG_DIR=/workspace/.ultralytics \
-    ROS_DOMAIN_ID=15 \
+    ROS_DOMAIN_ID=0 \
     ROS_LOCALHOST_ONLY=0
 
 # Initialize rosdep database
@@ -83,6 +88,7 @@ SHELL ["/bin/bash", "-lc"]
 
 # Auto-source ROS environment for interactive shells
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
+    echo "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh \${ROS_DOMAIN_ID:-0}; fi" >> /root/.bashrc && \
     echo "export PS1='\\u@\\h:\\w# '" >> /root/.bashrc
 
 # Ensure login shells also load .bashrc (for docker exec -it bash -l)
@@ -109,7 +115,12 @@ RUN pip3 install 'pip<25' 'setuptools<80,>=68' 'wheel>=0.40' 'packaging>=24.0' &
       bitsandbytes \
       soundfile \
       ultralytics \
-      urchin
+      urchin \
+      iopath \
+      timm \
+      ftfy==6.1.1 \
+      einops \
+      pycocotools
 
 WORKDIR /workspace
 
@@ -125,9 +136,14 @@ RUN mkdir -p /workspace/ros2_ws/src && \
 RUN pip3 install -c /tmp/constraints.txt \
     sentencepiece \
     protobuf \
+    "Pillow>=10.0.0,<11.0.0" \
+    wit \
+    websocket-client \
     fastapi==0.112.4 \
     uvicorn[standard] \
     gradio==4.16.0 \
+    scikit-image \
+    scikit-learn \
     PyQt5>=5.15.0
 
 # Keep container alive for interactive work (no extra shell)

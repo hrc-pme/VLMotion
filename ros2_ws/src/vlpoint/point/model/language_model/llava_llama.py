@@ -33,7 +33,7 @@ class LlavaConfig(LlamaConfig):
     max_new_tokens: int = 1024
     do_sample: bool = False
     top_p: Optional[float] = None
-    rope_scaling: Optional[dict] = {}
+    rope_scaling: Optional[dict] = None
 
 
 class LlavaLlamaModel(LlavaMetaModel, LlamaModel):

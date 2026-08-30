@@ -11,9 +11,11 @@ services:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
       - XDG_RUNTIME_DIR=/tmp/runtime-root
+      - HF_HOME=/root/.cache/huggingface
     volumes:
       # - ../models:/workspace/models:ro  # 模型目錄（只讀）
       - ../:/workspace
+      - ../.cache/huggingface:/root/.cache/huggingface
       - /tmp/.X11-unix:/tmp/.X11-unix:rw  # X11 支援（如果需要）
       - /dev/dri:/dev/dri:rw  # GPU access for hardware acceleration
       - /dev/video0:/dev/video0:rw  # 主攝影機

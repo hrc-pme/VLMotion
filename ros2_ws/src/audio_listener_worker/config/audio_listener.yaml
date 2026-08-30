@@ -1,0 +1,37 @@
+/**:
+  ros__parameters:
+    # 錄音時長（秒）
+    record_duration: 4.0
+    
+    # 採樣率（Hz）- Wit.ai 建議 16000
+    sample_rate: 16000
+    
+    # 音頻塊大小（幀數）
+    chunk_size: 1024
+
+    # 啟用 rosbridge websocket client
+    ws_client_enabled: true
+
+    # rosbridge websocket 伺服器
+    ws_url: ws://10.0.0.3:9090
+
+    # 透過 websocket 訂閱開始錄音指令的 topic
+    ws_start_listen_topic: /start_listen
+
+    # 透過 websocket 發送語音識別結果的 topic
+    ws_speech_to_text_topic: /speech_to_text
+
+    # websocket 斷線重連秒數
+    ws_reconnect_sec: 2.0
+
+    # 只用 websocket 當觸發來源（避免與 ROS topic 雙重觸發）
+    use_ros_topic_trigger: false
+
+    # 透過 websocket 訂閱 start_listen
+    use_ws_trigger: true
+
+    # 是否發佈結果到 ROS /speech_to_text topic
+    use_ros_topic_result_publish: false
+
+    # 是否透過 websocket publish 回傳 /speech_to_text
+    use_ws_result_publish: true
