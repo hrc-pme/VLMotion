@@ -43,9 +43,14 @@ class WristTargetPlanner:
         self.wrist_pitch = wrist_pitch
         self.wrist_roll = wrist_roll
 
-    def make_plan(self, target_world, arm_world_yaw):
+    def make_plan(self, target_world, arm_world_yaw, arm_extension=None):
+        requested_extension = (
+            self.desired_arm_extension
+            if arm_extension is None
+            else arm_extension
+        )
         extension = self.clamp(
-            self.desired_arm_extension,
+            requested_extension,
             self.min_arm_extension,
             self.max_arm_extension,
         )
@@ -67,9 +72,20 @@ class WristTargetPlanner:
             wrist_roll=self.wrist_roll,
         )
 
-    def make_side_axis_plan(self, target_world, base_yaw, side_sign):
+    def make_side_axis_plan(
+        self,
+        target_world,
+        base_yaw,
+        side_sign,
+        arm_extension=None,
+    ):
+        requested_extension = (
+            self.desired_arm_extension
+            if arm_extension is None
+            else arm_extension
+        )
         extension = self.clamp(
-            self.desired_arm_extension,
+            requested_extension,
             self.min_arm_extension,
             self.max_arm_extension,
         )

@@ -17,16 +17,19 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from white_point_pipeline.head_target_tracker import HeadTargetTracker
 from white_point_pipeline.side_reach_planner import SideReachPlanner
 from white_point_pipeline.wrist_target_planner import WristTargetPlanner
+from white_point_pipeline.workspace_classifier import (
+    choose_parallel_reach_yaw,
+    classify_workspace,
+)
 
 
 class WhitePointDirectMotion(Node):
-    """Two-stage direct motion node for Stretch.
+    """Workspace-adaptive direct motion node for Stretch.
 
-    Strategy:
-    1. First /white_point_base: move base_link to the wall-normal approach point.
-    2. Rotate toward the first target and wait for a second point selection.
-    3. Second /white_point_base: use the closer, more accurate target estimate.
-    4. Rotate toward that final target, drive the gripper close, then extend arm.
+    Height and planar reachability are assessed independently for the first
+    target. The lift and two-stage base approach are used only when their
+    respective workspace condition requires them. A target that requires base
+    translation retains the closer second-point selection for final accuracy.
 
     This node intentionally does not use the orange tangent offset, target
     compensation, or functions from white_point_full_motion.py.
@@ -36,6 +39,7 @@ class WhitePointDirectMotion(Node):
         super().__init__('white_point_direct_motion')
 
         self.declare_parameter('target_topic', '/white_point_base')
+        self.declare_parameter('secondary_target_topic', '/white_point_base_d405')
         self.declare_parameter('axis_topic', '/panel_axis_base')
         self.declare_parameter('cmd_vel_topic', '/stretch/cmd_vel')
         self.declare_parameter('trajectory_action', '/stretch_controller/follow_joint_trajectory')
@@ -46,6 +50,16 @@ class WhitePointDirectMotion(Node):
         self.declare_parameter('right_fingertip_frame', 'link_gripper_fingertip_right')
 
         self.declare_parameter('two_stage_enabled', True)
+        self.declare_parameter('adaptive_workspace_enabled', True)
+        self.declare_parameter('workspace_height_tolerance', 0.04)
+        self.declare_parameter('workspace_horizontal_min', 0.08)
+        self.declare_parameter('workspace_horizontal_max', 0.70)
+        self.declare_parameter('workspace_horizontal_tolerance', 0.05)
+        self.declare_parameter('workspace_reselection_position_tolerance', 0.25)
+        self.declare_parameter('d405_view_alignment_enabled', True)
+        self.declare_parameter('d405_view_target_base_x', 0.06)
+        self.declare_parameter('d405_view_base_x_tolerance', 0.035)
+        self.declare_parameter('d405_view_max_linear_adjustment', 0.35)
         self.declare_parameter('approach_distance', 0.70)
         self.declare_parameter('approach_tolerance', 0.035)
         self.declare_parameter('yaw_tolerance_deg', 4.0)
@@ -56,6 +70,7 @@ class WhitePointDirectMotion(Node):
         self.declare_parameter('use_gripper_tf_for_lift_height', True)
         self.declare_parameter('gripper_contact_z_offset', 0.0)
         self.declare_parameter('gripper_z_tolerance', 0.025)
+        self.declare_parameter('d405_height_tolerance', 0.01)
         self.declare_parameter('arm_contact_margin', 0.025)
         self.declare_parameter('arm_contact_overshoot_enabled', False)
         self.declare_parameter('final_contact_push_enabled', True)
@@ -107,6 +122,7 @@ class WhitePointDirectMotion(Node):
         self.declare_parameter('second_stage_yaw_max_angular_speed', 0.12)
 
         self.target_topic = self.get_parameter('target_topic').value
+        self.secondary_target_topic = self.get_parameter('secondary_target_topic').value
         self.axis_topic = self.get_parameter('axis_topic').value
         self.cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         self.trajectory_action = self.get_parameter('trajectory_action').value
@@ -117,6 +133,28 @@ class WhitePointDirectMotion(Node):
         self.right_fingertip_frame = self.get_parameter('right_fingertip_frame').value
 
         self.two_stage_enabled = bool(self.get_parameter('two_stage_enabled').value)
+        self.adaptive_workspace_enabled = bool(self.get_parameter('adaptive_workspace_enabled').value)
+        self.workspace_height_tolerance = float(self.get_parameter('workspace_height_tolerance').value)
+        self.workspace_horizontal_min = float(self.get_parameter('workspace_horizontal_min').value)
+        self.workspace_horizontal_max = float(self.get_parameter('workspace_horizontal_max').value)
+        self.workspace_horizontal_tolerance = float(
+            self.get_parameter('workspace_horizontal_tolerance').value
+        )
+        self.workspace_reselection_position_tolerance = float(
+            self.get_parameter('workspace_reselection_position_tolerance').value
+        )
+        self.d405_view_alignment_enabled = bool(
+            self.get_parameter('d405_view_alignment_enabled').value
+        )
+        self.d405_view_target_base_x = float(
+            self.get_parameter('d405_view_target_base_x').value
+        )
+        self.d405_view_base_x_tolerance = float(
+            self.get_parameter('d405_view_base_x_tolerance').value
+        )
+        self.d405_view_max_linear_adjustment = float(
+            self.get_parameter('d405_view_max_linear_adjustment').value
+        )
         self.approach_distance = float(self.get_parameter('approach_distance').value)
         self.approach_tolerance = float(self.get_parameter('approach_tolerance').value)
         self.yaw_tolerance = math.radians(float(self.get_parameter('yaw_tolerance_deg').value))
@@ -127,6 +165,9 @@ class WhitePointDirectMotion(Node):
         self.use_gripper_tf_for_lift_height = bool(self.get_parameter('use_gripper_tf_for_lift_height').value)
         self.gripper_contact_z_offset = float(self.get_parameter('gripper_contact_z_offset').value)
         self.gripper_z_tolerance = float(self.get_parameter('gripper_z_tolerance').value)
+        self.d405_height_tolerance = float(
+            self.get_parameter('d405_height_tolerance').value
+        )
         self.arm_contact_margin = float(self.get_parameter('arm_contact_margin').value)
         self.arm_contact_overshoot_enabled = bool(self.get_parameter('arm_contact_overshoot_enabled').value)
         self.final_contact_push_enabled = bool(self.get_parameter('final_contact_push_enabled').value)
@@ -229,6 +270,12 @@ class WhitePointDirectMotion(Node):
             self.target_callback,
             10,
         )
+        self.secondary_target_sub = self.create_subscription(
+            PointStamped,
+            self.secondary_target_topic,
+            self.secondary_target_callback,
+            10,
+        )
         self.axis_sub = self.create_subscription(
             Float32,
             self.axis_topic,
@@ -267,6 +314,15 @@ class WhitePointDirectMotion(Node):
         self.phase = 'idle'
         self.second_target_locked = False
         self.after_lift_phase = 'move_approach'
+        self.after_wrist_phase = 'raise_lift'
+        self.after_wrist_contact_phase = 'waiting_second_point'
+        self.needs_lift_motion = True
+        self.needs_base_motion = True
+        self.workspace_scenario = 'height_and_base'
+        self.first_stage_base_motion_required = True
+        self.d405_target_locked = False
+        self.workspace_aligned_yaw_world = None
+        self.workspace_aligned_target_world = None
         self.final_min_dist_xy = float('inf')
         self.final_dist_increase_count = 0
 
@@ -284,7 +340,8 @@ class WhitePointDirectMotion(Node):
         self.wrist_contact_pose_sent = False
 
         self.get_logger().info(
-            'white_point_direct_motion ready. It uses a direct two-stage approach point flow; '
+            'white_point_direct_motion ready. Adaptive workspace classification is '
+            f'{"enabled" if self.adaptive_workspace_enabled else "disabled"}; '
             'do not run it at the same time as white_point_full_motion.'
         )
 
@@ -307,6 +364,9 @@ class WhitePointDirectMotion(Node):
         self.end_effector_plan = None
         self.second_target_locked = False
         self.wrist_contact_pose_sent = False
+        self.d405_target_locked = False
+        self.workspace_aligned_yaw_world = None
+        self.workspace_aligned_target_world = None
         self.phase = 'idle'
         self.reset_action_state()
         self.get_logger().warn(f'Emergency stop from {source}: base stopped and motion state reset.')
@@ -373,15 +433,34 @@ class WhitePointDirectMotion(Node):
             idx = msg.name.index('wrist_extension')
             self.current_arm_pos = float(msg.position[idx])
 
-    def target_callback(self, msg):
-        retarget_after_done = self.phase == 'done'
+    def secondary_target_callback(self, msg):
+        self.target_callback(msg, target_source='d405')
+
+    def target_callback(self, msg, target_source='d435'):
+        phase_at_selection = self.phase
+        if target_source == 'd435' and phase_at_selection not in ('idle', 'done', 'failed'):
+            self.get_logger().warn(
+                f'Ignoring D435 target during phase={phase_at_selection}; '
+                'the next refinement must come from D405.'
+            )
+            return
+        if target_source == 'd405' and phase_at_selection not in (
+            'waiting_second_point',
+            'final_approach',
+            'extend_arm',
+            'final_push',
+        ):
+            self.get_logger().warn(
+                f'Ignoring D405 target during phase={phase_at_selection}; '
+                'select the first point from D435.'
+            )
+            return
         is_second_or_retarget = self.phase in (
             'waiting_second_point',
             'align_target',
             'final_approach',
             'extend_arm',
             'final_push',
-            'done',
         )
 
         try:
@@ -396,6 +475,11 @@ class WhitePointDirectMotion(Node):
             self.get_logger().warn(f'Failed to transform target to {self.world_frame}: {exc}')
             return
 
+        reuse_workspace_alignment = self.should_reuse_workspace_alignment(
+            target_world,
+            phase_at_selection,
+        )
+
         self.stop_base()
         self.target_world = target_world
         self.final_min_dist_xy = float('inf')
@@ -406,6 +490,7 @@ class WhitePointDirectMotion(Node):
 
         if self.two_stage_enabled and is_second_or_retarget:
             self.second_target_locked = True
+            self.d405_target_locked = target_source == 'd405'
             if self.lock_base_yaw_after_first_stage and self.locked_base_yaw_world is None:
                 base_pose = self.lookup_base_pose()
                 if base_pose is not None:
@@ -415,39 +500,239 @@ class WhitePointDirectMotion(Node):
                         f'Second stage base yaw locked at current yaw '
                         f'{math.degrees(self.locked_base_yaw_world):.1f}deg.'
                     )
+            if target_source == 'd405' and self.adaptive_workspace_enabled:
+                d405_height_reachable = self.assess_d405_height_reach()
+                self.needs_lift_motion = not d405_height_reachable
+            else:
+                assessment = self.assess_target_workspace()
+                self.needs_lift_motion = (
+                    not self.adaptive_workspace_enabled
+                    or assessment is None
+                    or not assessment.height_reachable
+                )
+            self.needs_base_motion = self.first_stage_base_motion_required
             self.side_reach_base_world = None
             self.end_effector_plan = None
             self.compute_side_reach_base_point()
-            if retarget_after_done:
-                self.after_lift_phase = 'final_approach'
-                self.phase = 'final_approach'
-                self.get_logger().info(
-                    f'Fine-adjust target locked after completion: x={target_world.x:.3f}, '
-                    f'y={target_world.y:.3f}, z={target_world.z:.3f}. '
-                    'Keeping current base yaw and adjusting base/arm from current gripper pose.'
+            if self.needs_base_motion:
+                self.after_lift_phase = (
+                    'move_side_reach_pose'
+                    if self.side_reach_enabled
+                    else 'align_target'
                 )
-                return
-            self.after_lift_phase = 'move_side_reach_pose' if self.side_reach_enabled else 'align_target'
-            self.phase = 'raise_lift'
+            else:
+                self.after_lift_phase = 'final_approach'
+            self.phase = 'raise_lift' if self.needs_lift_motion else self.after_lift_phase
             self.get_logger().info(
                 f'Second/final target locked: x={target_world.x:.3f}, '
                 f'y={target_world.y:.3f}, z={target_world.z:.3f}. '
-                'Using this closer target for final approach.'
+                f'source={target_source}, using D405 refinement for final approach; '
+                f'base_translation_needed={self.needs_base_motion}.'
             )
             return
 
-        self.second_target_locked = not self.two_stage_enabled
+        assessment = self.assess_target_workspace()
+        if self.adaptive_workspace_enabled and assessment is not None:
+            self.workspace_scenario = assessment.scenario
+            self.needs_lift_motion = not assessment.height_reachable
+            self.needs_base_motion = not assessment.horizontal_reachable
+        else:
+            # Preserve the original behavior when adaptive selection is disabled
+            # or TF data is not ready enough to make a safe decision.
+            self.workspace_scenario = 'height_and_base' if self.two_stage_enabled else 'height_only'
+            self.needs_lift_motion = True
+            self.needs_base_motion = self.two_stage_enabled
+
+        self.first_stage_base_motion_required = self.needs_base_motion
+        self.d405_target_locked = False
+        requires_second_point = self.two_stage_enabled
+        self.second_target_locked = not requires_second_point
         self.locked_base_yaw_world = None
         self.wrist_contact_pose_sent = False
-        self.after_lift_phase = 'move_approach' if self.two_stage_enabled else 'align_target'
+        self.after_lift_phase = 'move_approach' if self.needs_base_motion else 'align_target'
+        self.after_wrist_phase = 'raise_lift' if self.needs_lift_motion else self.after_lift_phase
         self.approach_world = None
         self.end_effector_plan = None
-        self.compute_approach_point()
+        if reuse_workspace_alignment:
+            self.reach_yaw_world = self.workspace_aligned_yaw_world
+            self.arm_world_yaw = WristTargetPlanner.arm_yaw_from_side_geometry(
+                self.reach_yaw_world,
+                self.arm_extension_sign,
+            )
+            self.get_logger().info(
+                f'Reselected nearby workspace target after {phase_at_selection}; preserving '
+                f'already-aligned base yaw={math.degrees(self.reach_yaw_world):.1f}deg '
+                'and ignoring the new PCA tangent sign.'
+            )
+        else:
+            if phase_at_selection in ('failed', 'done'):
+                self.workspace_aligned_yaw_world = None
+                self.workspace_aligned_target_world = None
+            self.orient_reach_yaw_toward_target(target_world)
+        if self.needs_base_motion:
+            self.compute_approach_point()
         self.phase = 'reset_wrist'
         self.get_logger().info(
             f'First target locked: x={target_world.x:.3f}, y={target_world.y:.3f}, z={target_world.z:.3f}. '
-            f'Moving to approach distance={self.approach_distance:.2f}m, then waiting for second point.'
+            f'source={target_source}, '
+            f'Scenario={self.workspace_scenario}, lift_needed={self.needs_lift_motion}, '
+            f'base_needed={self.needs_base_motion}, second_point_needed={requires_second_point}.'
         )
+
+    def orient_reach_yaw_toward_target(self, target_world):
+        """Resolve the panel tangent's 180-degree ambiguity toward the target."""
+        if self.reach_yaw_world is None:
+            return False
+        base_pose = self.lookup_base_pose()
+        if base_pose is None:
+            return False
+        base_pos, _ = base_pose
+        target_bearing = math.atan2(
+            target_world.y - base_pos.y,
+            target_world.x - base_pos.x,
+        )
+
+        candidate = self.reach_yaw_world
+        if self.arm_extension_axis == 'y':
+            sign = 1.0 if self.arm_extension_sign >= 0.0 else -1.0
+            contact_offset = sign * math.pi / 2.0
+        else:
+            contact_offset = 0.0
+        chosen_yaw, chosen_contact, candidate_error, flipped_error = (
+            choose_parallel_reach_yaw(candidate, target_bearing, contact_offset)
+        )
+        flipped = self.wrap_pi(candidate + math.pi)
+        candidate_contact = self.wrap_pi(candidate + contact_offset)
+        flipped_contact = self.wrap_pi(flipped + contact_offset)
+        choice = (
+            'flipped_parallel'
+            if abs(self.wrap_pi(chosen_yaw - flipped)) < 1e-6
+            else 'original_parallel'
+        )
+
+        self.reach_yaw_world = chosen_yaw
+        self.arm_world_yaw = chosen_contact
+        self.get_logger().info(
+            f'Panel tangent ambiguity resolved toward target: '
+            f'target_bearing={math.degrees(target_bearing):.1f}deg, '
+            f'candidate_base={math.degrees(candidate):.1f}deg '
+            f'(arm={math.degrees(candidate_contact):.1f}deg, '
+            f'error={math.degrees(candidate_error):.1f}deg), '
+            f'flipped_base={math.degrees(flipped):.1f}deg '
+            f'(arm={math.degrees(flipped_contact):.1f}deg, '
+            f'error={math.degrees(flipped_error):.1f}deg), '
+            f'choice={choice}, chosen_base={math.degrees(chosen_yaw):.1f}deg.'
+        )
+        return True
+
+    def should_reuse_workspace_alignment(self, target_world, phase_at_selection):
+        """Keep base yaw when a nearby target is reselected after final alignment."""
+        if (
+            phase_at_selection not in ('failed', 'done')
+            or self.workspace_aligned_yaw_world is None
+            or self.workspace_aligned_target_world is None
+        ):
+            return False
+        dx = target_world.x - self.workspace_aligned_target_world.x
+        dy = target_world.y - self.workspace_aligned_target_world.y
+        dz = target_world.z - self.workspace_aligned_target_world.z
+        target_delta = math.sqrt(dx * dx + dy * dy + dz * dz)
+        reuse = target_delta <= self.workspace_reselection_position_tolerance
+        self.get_logger().info(
+            f'Workspace reselection check: target_delta={target_delta:.3f}m, '
+            f'tolerance={self.workspace_reselection_position_tolerance:.3f}m, reuse_yaw={reuse}.'
+        )
+        return reuse
+
+    def assess_target_workspace(self):
+        """Assess current height and XY reach using independent conditions."""
+        if self.target_world is None:
+            return None
+        base_target = self.transform_point_to_base(self.target_world)
+        if base_target is None:
+            return None
+
+        # Fingertip Z changes substantially when the wrist is reset. Compare
+        # lift coordinates instead, which predicts the final contact height
+        # without depending on the wrist pose at selection time.
+        required_lift = self.clamp(
+            base_target.z - self.gripper_z_offset,
+            self.lift_min,
+            self.lift_max,
+        )
+        current_height_reference = self.current_lift_pos
+        height_source = 'required_lift-current_lift'
+        if current_height_reference is None:
+            # Joint states should normally be ready before a GUI selection.
+            # This conservative fallback is retained for startup races.
+            gripper = self.get_gripper_center_world()
+            if gripper is not None:
+                required_lift = self.target_world.z
+                current_height_reference = gripper.z + self.gripper_contact_z_offset
+                height_source = 'fallback_gripper_tf'
+
+        assessment = classify_workspace(
+            target_z=required_lift,
+            gripper_contact_z=current_height_reference,
+            horizontal_distance=math.hypot(base_target.x, base_target.y),
+            height_tolerance=self.workspace_height_tolerance,
+            horizontal_min=self.workspace_horizontal_min,
+            horizontal_max=self.workspace_horizontal_max,
+            horizontal_tolerance=self.workspace_horizontal_tolerance,
+        )
+        height_error_text = (
+            f'{assessment.height_error * 100.0:.1f}cm'
+            if assessment.height_error is not None
+            else 'unknown'
+        )
+        self.get_logger().info(
+            f'[WorkspaceDecision] scenario={assessment.scenario}, '
+            f'height_reachable={assessment.height_reachable} '
+            f'(lift_error={height_error_text}, source={height_source}, '
+            f'required_lift={required_lift:.3f}m, '
+            f'current_lift={self.current_lift_pos if self.current_lift_pos is not None else float("nan"):.3f}m, '
+            f'tolerance={self.workspace_height_tolerance * 100.0:.1f}cm), '
+            f'horizontal_reachable={assessment.horizontal_reachable} '
+            f'(base_xy={assessment.horizontal_distance:.3f}m, nominal_range='
+            f'[{self.workspace_horizontal_min:.3f}, {self.workspace_horizontal_max:.3f}]m, '
+            f'margin={self.workspace_horizontal_tolerance:.3f}m, '
+            f'outside_by={abs(assessment.horizontal_shortfall):.3f}m).'
+        )
+        return assessment
+
+    def assess_d405_height_reach(self):
+        """Use live fingertip TF for the D405's final height decision."""
+        if self.target_world is None:
+            return False
+        gripper = self.get_gripper_center_world()
+        if gripper is None:
+            self.get_logger().warn(
+                '[D405HeightDecision] gripper TF unavailable; requesting lift adjustment conservatively.'
+            )
+            return False
+
+        contact_z = gripper.z + self.gripper_contact_z_offset
+        z_error = self.target_world.z - contact_z
+        reachable = abs(z_error) <= self.d405_height_tolerance
+        predicted_lift = None
+        if self.current_lift_pos is not None:
+            predicted_lift = self.clamp(
+                self.current_lift_pos + z_error,
+                self.lift_min,
+                self.lift_max,
+            )
+        predicted_text = (
+            f'{predicted_lift:.3f}m'
+            if predicted_lift is not None
+            else 'unknown'
+        )
+        self.get_logger().info(
+            f'[D405HeightDecision] target_z={self.target_world.z:.3f}m, '
+            f'gripper_contact_z={contact_z:.3f}m, z_error={z_error * 100.0:.1f}cm, '
+            f'tolerance={self.d405_height_tolerance * 100.0:.1f}cm, '
+            f'reachable={reachable}, predicted_lift={predicted_text}.'
+        )
+        return reachable
 
     def reset_action_state(self):
         self.wrist_goal_handle = None
@@ -474,12 +759,19 @@ class WhitePointDirectMotion(Node):
             'raise_lift',
             'move_approach',
             'move_side_reach_pose',
+            'align_d405_view',
             'prepare_second_point',
         ):
             return 'moving_to_approach'
         if self.phase == 'waiting_second_point':
             return 'waiting_second_point'
-        if self.phase in ('align_target', 'final_approach', 'extend_arm', 'final_push'):
+        if self.phase in (
+            'align_target',
+            'prepare_final_contact',
+            'final_approach',
+            'extend_arm',
+            'final_push',
+        ):
             return 'moving_to_target'
         return 'select_first_point'
 
@@ -536,6 +828,14 @@ class WhitePointDirectMotion(Node):
                     self.get_logger().info('Reached side-reach base pose. Aligning base tangent for arm reach.')
             return
 
+        if self.phase == 'align_d405_view':
+            if self.align_base_for_d405_view():
+                self.phase = 'prepare_second_point'
+                self.get_logger().info(
+                    'D405 view alignment complete. Setting wrist contact pose before second selection.'
+                )
+            return
+
         if self.phase == 'align_target':
             if self.rotate_base_toward_target():
                 if self.two_stage_enabled and not self.second_target_locked:
@@ -548,16 +848,44 @@ class WhitePointDirectMotion(Node):
                                 f'Locked second-stage base yaw at '
                                 f'{math.degrees(self.locked_base_yaw_world):.1f}deg.'
                             )
-                    self.phase = 'prepare_second_point'
-                    self.get_logger().info(
-                        'Base yaw aligned to first target. Setting wrist contact pose before second selection.'
-                    )
+                    self.after_wrist_contact_phase = 'waiting_second_point'
+                    if (
+                        self.d405_view_alignment_enabled
+                        and self.workspace_scenario != 'height_and_base'
+                    ):
+                        self.phase = 'align_d405_view'
+                        self.get_logger().info(
+                            'Base yaw aligned to first target. Adjusting base forward/backward '
+                            'to place the target in the D405 view.'
+                        )
+                    else:
+                        self.phase = 'prepare_second_point'
+                        self.get_logger().info(
+                            'Base yaw aligned to first target. '
+                            'Setting wrist contact pose before second selection.'
+                        )
                 else:
-                    self.phase = 'final_approach'
-                    self.get_logger().info('Base yaw aligned. Starting final forward approach.')
+                    base_pose = self.lookup_base_pose()
+                    if not self.needs_base_motion and base_pose is not None:
+                        _, aligned_yaw = base_pose
+                        self.workspace_aligned_yaw_world = aligned_yaw
+                        aligned_target = Point()
+                        aligned_target.x = self.target_world.x
+                        aligned_target.y = self.target_world.y
+                        aligned_target.z = self.target_world.z
+                        self.workspace_aligned_target_world = aligned_target
+                        self.get_logger().info(
+                            f'Saved workspace alignment at base_yaw='
+                            f'{math.degrees(aligned_yaw):.1f}deg for nearby reselections.'
+                        )
+                    self.after_wrist_contact_phase = 'final_approach'
+                    self.phase = 'prepare_final_contact'
+                    self.get_logger().info(
+                        'Base yaw aligned using rotation only. Setting wrist contact yaw before arm reach.'
+                    )
             return
 
-        if self.phase == 'prepare_second_point':
+        if self.phase in ('prepare_second_point', 'prepare_final_contact'):
             self.handle_wrist_contact_pose()
             return
 
@@ -587,6 +915,26 @@ class WhitePointDirectMotion(Node):
         if base_pose is None:
             return False
         base_pos, base_yaw = base_pose
+
+        target_dist = math.hypot(
+            self.target_world.x - base_pos.x,
+            self.target_world.y - base_pos.y,
+        )
+        if target_dist <= self.approach_distance + self.workspace_horizontal_tolerance:
+            # Safety net for stale/marginal classifications: never rotate 180
+            # degrees to chase an approach point that lies behind the robot
+            # when it is already at least as close as the preparation radius.
+            pt = Point()
+            pt.x = base_pos.x
+            pt.y = base_pos.y
+            pt.z = self.target_world.z
+            self.approach_world = pt
+            self.get_logger().warn(
+                f'Approach move suppressed: base is already {target_dist:.3f}m from target '
+                f'(approach radius={self.approach_distance:.3f}m, '
+                f'margin={self.workspace_horizontal_tolerance:.3f}m).'
+            )
+            return True
 
         if self.panel_axis_base is not None:
             normal_yaw_base = self.wrap_pi(self.panel_axis_base - math.pi / 2.0)
@@ -677,6 +1025,54 @@ class WhitePointDirectMotion(Node):
             f'Move approach: dist={dist:.3f}m heading={math.degrees(heading_error):.1f}deg '
             f'lin={twist.linear.x:.3f} ang={twist.angular.z:.3f} allow_rotation={allow_rotation}',
             throttle_duration_sec=0.5,
+        )
+        return False
+
+    def align_base_for_d405_view(self):
+        """Translate along locked base yaw until the D435 target enters D405 view."""
+        if self.target_world is None:
+            return False
+        target_base = self.transform_point_to_base(self.target_world)
+        if target_base is None:
+            return False
+
+        forward_error = target_base.x - self.d405_view_target_base_x
+        if abs(forward_error) <= self.d405_view_base_x_tolerance:
+            self.stop_base()
+            self.get_logger().info(
+                f'D405 view target aligned: target_base_x={target_base.x:.3f}m, '
+                f'desired_x={self.d405_view_target_base_x:.3f}m, '
+                f'error={forward_error:.3f}m.'
+            )
+            return True
+
+        if abs(forward_error) > self.d405_view_max_linear_adjustment:
+            self.stop_base()
+            self.phase = 'failed'
+            self.get_logger().warn(
+                f'D405 view alignment requires {forward_error:.3f}m of base translation, '
+                f'exceeding safety limit {self.d405_view_max_linear_adjustment:.3f}m; '
+                'motion stopped.'
+            )
+            return False
+
+        twist = Twist()
+        twist.linear.x = self.clamp(
+            self.k_linear * forward_error,
+            -self.final_max_linear_speed,
+            self.final_max_linear_speed,
+        )
+        # Yaw was locked after D435 alignment. Never reorient while preparing
+        # the wrist camera view.
+        twist.angular.z = 0.0
+        self.cmd_vel_pub.publish(twist)
+        direction = 'forward' if twist.linear.x >= 0.0 else 'backward'
+        self.get_logger().info(
+            f'D405 view base alignment: target_base_x={target_base.x:.3f}m, '
+            f'desired_x={self.d405_view_target_base_x:.3f}m, '
+            f'error={forward_error:.3f}m, direction={direction}, '
+            f'cmd=({twist.linear.x:.3f}m/s, 0.000rad/s).',
+            throttle_duration_sec=1.0,
         )
         return False
 
@@ -776,6 +1172,11 @@ class WhitePointDirectMotion(Node):
         locked_yaw = self.get_locked_second_stage_base_yaw()
         if locked_yaw is None:
             return None
+        if not self.needs_base_motion:
+            # A workspace target was already aligned using D435. The D405
+            # point refines contact position only; it must not rotate the base
+            # from a new, sign-ambiguous PCA tangent.
+            return locked_yaw
         if (
             not self.second_stage_yaw_micro_adjust_enabled
             or self.panel_axis_yaw_world is None
@@ -866,6 +1267,13 @@ class WhitePointDirectMotion(Node):
         return False
 
     def drive_side_reach_base_alignment(self):
+        if (
+            self.adaptive_workspace_enabled
+            and not self.needs_base_motion
+            and not self.d405_target_locked
+        ):
+            return self.check_direct_workspace_arm_reach()
+
         err = self.compute_side_reach_pose_error()
         if err is None:
             return False
@@ -957,6 +1365,55 @@ class WhitePointDirectMotion(Node):
         )
         return False
 
+    def check_direct_workspace_arm_reach(self):
+        """Validate direct arm reach without issuing any base translation."""
+        if self.end_effector_plan is None:
+            self.compute_side_reach_base_point()
+        gripper_delta = self.compute_gripper_target_error()
+        base_pose = self.lookup_base_pose()
+        if gripper_delta is None or base_pose is None or self.end_effector_plan is None:
+            return False
+
+        _, base_yaw = base_pose
+        extension_delta = self.arm_extension_distance(*gripper_delta)
+        lateral_error = self.arm_lateral_error(*gripper_delta)
+        current_arm = (
+            self.current_arm_pos
+            if self.current_arm_pos is not None
+            else self.last_commanded_arm_pos
+        )
+        required_arm = current_arm + extension_delta
+        yaw_error = self.wrap_pi(self.end_effector_plan.base_yaw - base_yaw)
+        arm_reachable = (
+            self.arm_min
+            <= required_arm
+            <= self.arm_max
+        )
+        lateral_reachable = abs(lateral_error) <= self.side_axis_gripper_lateral_tolerance
+        yaw_aligned = abs(yaw_error) <= self.yaw_tolerance
+
+        if arm_reachable and lateral_reachable and yaw_aligned:
+            self.stop_base()
+            self.get_logger().info(
+                f'Direct workspace reach ready without base translation: '
+                f'current_arm={current_arm:.3f}m, extension_delta={extension_delta:.3f}m, '
+                f'required_arm={required_arm:.3f}m, lateral={lateral_error:.3f}m, '
+                f'yaw_error={math.degrees(yaw_error):.1f}deg.'
+            )
+            return True
+
+        self.stop_base()
+        self.phase = 'failed'
+        self.get_logger().warn(
+            f'Direct workspace reach is not kinematically ready; motion failed safely '
+            f'and base remains stopped: '
+            f'required_arm={required_arm:.3f}m (reachable={arm_reachable}), '
+            f'lateral={lateral_error:.3f}m (reachable={lateral_reachable}), '
+            f'yaw_error={math.degrees(yaw_error):.1f}deg (aligned={yaw_aligned}).',
+            throttle_duration_sec=1.0,
+        )
+        return False
+
     def compute_side_reach_pose_error(self):
         if self.target_world is None:
             return None
@@ -989,21 +1446,52 @@ class WhitePointDirectMotion(Node):
         if base_yaw is None:
             return False
 
+        direct_arm_extension = None
+        if self.adaptive_workspace_enabled and not self.needs_base_motion:
+            base_pose = self.lookup_base_pose()
+            if base_pose is None:
+                return False
+            base_pos, _ = base_pose
+            if self.arm_extension_axis == 'y':
+                sign = 1.0 if self.arm_extension_sign >= 0.0 else -1.0
+                contact_axis_yaw = self.wrap_pi(base_yaw + sign * math.pi / 2.0)
+            else:
+                contact_axis_yaw = base_yaw
+            target_dx = self.target_world.x - base_pos.x
+            target_dy = self.target_world.y - base_pos.y
+            projected_reach = (
+                target_dx * math.cos(contact_axis_yaw)
+                + target_dy * math.sin(contact_axis_yaw)
+            )
+            direct_arm_extension = self.clamp(
+                projected_reach,
+                self.wrist_target_planner.min_arm_extension,
+                self.wrist_target_planner.max_arm_extension,
+            )
+            self.get_logger().info(
+                f'Workspace target needs no base translation: using current projected '
+                f'arm reach {projected_reach:.3f}m (planned={direct_arm_extension:.3f}m).',
+                throttle_duration_sec=1.0,
+            )
+
         if self.get_locked_second_stage_base_yaw() is not None and self.arm_extension_axis != 'y':
             self.end_effector_plan = self.wrist_target_planner.make_plan(
                 self.target_world,
                 base_yaw,
+                direct_arm_extension,
             )
         elif self.arm_extension_axis == 'y':
             self.end_effector_plan = self.wrist_target_planner.make_side_axis_plan(
                 self.target_world,
                 base_yaw,
                 self.arm_extension_sign,
+                direct_arm_extension,
             )
         else:
             self.end_effector_plan = self.wrist_target_planner.make_plan(
                 self.target_world,
                 base_yaw,
+                direct_arm_extension,
             )
         pt = self.end_effector_plan.base_point
         self.side_reach_base_world = pt
@@ -1101,7 +1589,7 @@ class WhitePointDirectMotion(Node):
         wrist_yaw, wrist_pitch, wrist_roll = self.get_wrist_contact_positions()
         self.clear_goal('wrist')
         self.get_logger().info(
-            f'Setting wrist contact pose before base alignment: '
+            f'Setting wrist contact pose: '
             f'yaw={math.degrees(wrist_yaw):.1f}deg, '
             f'pitch={math.degrees(wrist_pitch):.1f}deg, roll={math.degrees(wrist_roll):.1f}deg.'
         )
@@ -1117,8 +1605,8 @@ class WhitePointDirectMotion(Node):
     def handle_wrist_contact_pose(self):
         self.stop_base()
         if self.wrist_contact_pose_sent:
-            self.phase = 'waiting_second_point'
-            self.get_logger().info('Wrist contact pose ready. Waiting for second, closer point selection.')
+            self.phase = self.after_wrist_contact_phase
+            self.log_wrist_contact_transition()
             return
 
         if self.wrist_goal_handle is None and not self.wrist_sending:
@@ -1130,13 +1618,27 @@ class WhitePointDirectMotion(Node):
 
         if self.wrist_result.status == 4:
             self.wrist_contact_pose_sent = True
-            self.phase = 'waiting_second_point'
-            self.get_logger().info('Wrist contact pose ready. Waiting for second, closer point selection.')
+            self.phase = self.after_wrist_contact_phase
+            self.log_wrist_contact_transition()
         else:
             self.get_logger().warn(
-                f'Wrist contact pose failed with status {self.wrist_result.status}; retrying before second point.'
+                f'Wrist contact pose failed with status {self.wrist_result.status}; retrying.'
             )
             self.clear_goal('wrist')
+
+    def log_wrist_contact_transition(self):
+        wrist_yaw, _, _ = self.get_wrist_contact_positions()
+        yaw_text = f'{math.degrees(wrist_yaw):.1f}deg'
+        if self.phase == 'waiting_second_point':
+            self.get_logger().info(
+                f'Wrist contact pose ready at yaw={yaw_text}. '
+                'Waiting for second, closer point selection.'
+            )
+        else:
+            self.get_logger().info(
+                f'Wrist contact pose ready at yaw={yaw_text}. Next phase={self.phase}; '
+                'base translation remains disabled for workspace motion.'
+            )
 
     def is_non_head_motion_active(self):
         base_motion_active = (
@@ -1148,7 +1650,9 @@ class WhitePointDirectMotion(Node):
             or self.phase in (
                 'reset_wrist',
                 'raise_lift',
+                'align_d405_view',
                 'prepare_second_point',
+                'prepare_final_contact',
                 'extend_arm',
                 'final_push',
             )
@@ -1186,8 +1690,11 @@ class WhitePointDirectMotion(Node):
             return
         if self.wrist_result.status == 4:
             self.clear_goal('wrist')
-            self.phase = 'raise_lift'
-            self.get_logger().info('Wrist reset complete.')
+            self.phase = self.after_wrist_phase
+            self.get_logger().info(
+                f'Wrist reset complete. Next phase={self.phase} '
+                f'(scenario={self.workspace_scenario}).'
+            )
         else:
             self.get_logger().warn(f'Wrist reset failed with status {self.wrist_result.status}; retrying.')
             self.wrist_goal_handle = None
@@ -1418,7 +1925,15 @@ class WhitePointDirectMotion(Node):
             along_base, lateral_error, yaw_error = err
             yaw_locked = self.get_locked_second_stage_base_yaw() is not None
             locked_side_axis = self.is_locked_side_axis_plan()
-            if locked_side_axis:
+            direct_workspace_plan = (
+                self.adaptive_workspace_enabled
+                and not self.needs_base_motion
+                and self.end_effector_plan is not None
+                and self.end_effector_plan.contact_axis == 'y'
+            )
+            use_gripper_delta_plan = locked_side_axis or direct_workspace_plan
+            if use_gripper_delta_plan:
+                locked_side_axis = True
                 gripper_delta = self.compute_gripper_target_error()
                 if gripper_delta is None:
                     return False
@@ -1514,7 +2029,14 @@ class WhitePointDirectMotion(Node):
             return False
 
         lift_pos = None
-        if self.target_world is not None:
+        if self.adaptive_workspace_enabled and not self.needs_lift_motion:
+            lift_pos = self.current_lift_pos
+            self.get_logger().info(
+                f'[LiftHeight:arm_extend] target is inside height tolerance; '
+                f'holding current lift at '
+                f'{lift_pos if lift_pos is not None else float("nan"):.3f}m.'
+            )
+        elif self.target_world is not None:
             base_target = self.transform_point_to_base(self.target_world)
             if base_target is None:
                 return False
@@ -1576,7 +2098,11 @@ class WhitePointDirectMotion(Node):
                 and self.end_effector_plan is not None
                 and self.end_effector_plan.contact_axis == 'x'
             )
-            locked_side_axis = self.is_locked_side_axis_plan()
+            locked_side_axis = self.is_locked_side_axis_plan() or (
+                self.adaptive_workspace_enabled
+                and not self.needs_base_motion
+                and self.end_effector_plan.contact_axis == 'y'
+            )
             if locked_side_axis:
                 gripper_delta = self.compute_gripper_target_error()
                 if gripper_delta is None:
@@ -1596,7 +2122,7 @@ class WhitePointDirectMotion(Node):
                     abs(extension_error) <= self.arm_contact_tolerance
                     and abs(lateral_error) <= self.side_axis_gripper_lateral_tolerance
                     and yaw_aligned
-                    and (not z_known or abs(z_error) <= self.gripper_z_tolerance)
+                    and (not z_known or abs(z_error) <= self.contact_height_tolerance())
                 )
                 self.get_logger().info(
                     f'Side-axis contact check after arm extension: '
@@ -1635,7 +2161,7 @@ class WhitePointDirectMotion(Node):
                 )
                 and yaw_aligned
                 and (not arm_known or arm_error <= 0.06)
-                and (not z_known or abs(z_error) <= self.gripper_z_tolerance)
+                and (not z_known or abs(z_error) <= self.contact_height_tolerance())
             )
             self.get_logger().info(
                 f'Side-axis contact check after arm extension: '
@@ -1668,7 +2194,7 @@ class WhitePointDirectMotion(Node):
                 extension <= self.arm_contact_margin
                 and abs(lateral_error) <= max(self.final_y_tolerance, self.arm_contact_tolerance)
             )
-        ) and abs(dz_world) <= self.gripper_z_tolerance
+        ) and abs(dz_world) <= self.contact_height_tolerance()
         self.get_logger().info(
             f'Contact check after arm extension: xy={dist_xy * 100:.1f}cm, '
             f'extension={extension * 100:.1f}cm, lateral={lateral_error * 100:.1f}cm, '
@@ -1677,6 +2203,12 @@ class WhitePointDirectMotion(Node):
             f'reached={reached}.'
         )
         return reached
+
+    def contact_height_tolerance(self):
+        """Return the height tolerance appropriate for the active target source."""
+        if self.d405_target_locked:
+            return self.d405_height_tolerance
+        return self.gripper_z_tolerance
 
     def send_joint_goal(self, names, positions, seconds, kind):
         if not self.trajectory_client.wait_for_server(timeout_sec=1.0):

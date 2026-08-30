@@ -280,6 +280,7 @@ def launch_setup(context, *args, **kwargs):
             }],
             remappings=[
                 ('/white_point_pixel', '/white_point_pixel_d405'),
+                ('/white_point_base', '/white_point_base_d405'),
             ],
         ))
 
@@ -291,6 +292,28 @@ def launch_setup(context, *args, **kwargs):
             '--ros-args',
             '-r',
             '__node:=white_point_direct_motion',
+            '-p',
+            ['adaptive_workspace_enabled:=', LaunchConfiguration('adaptive_workspace_enabled')],
+            '-p',
+            ['workspace_height_tolerance:=', LaunchConfiguration('workspace_height_tolerance')],
+            '-p',
+            ['workspace_horizontal_min:=', LaunchConfiguration('workspace_horizontal_min')],
+            '-p',
+            ['workspace_horizontal_max:=', LaunchConfiguration('workspace_horizontal_max')],
+            '-p',
+            ['workspace_horizontal_tolerance:=', LaunchConfiguration('workspace_horizontal_tolerance')],
+            '-p',
+            ['workspace_reselection_position_tolerance:=', LaunchConfiguration('workspace_reselection_position_tolerance')],
+            '-p',
+            ['d405_view_alignment_enabled:=', LaunchConfiguration('d405_view_alignment_enabled')],
+            '-p',
+            ['d405_view_target_base_x:=', LaunchConfiguration('d405_view_target_base_x')],
+            '-p',
+            ['d405_view_base_x_tolerance:=', LaunchConfiguration('d405_view_base_x_tolerance')],
+            '-p',
+            ['d405_view_max_linear_adjustment:=', LaunchConfiguration('d405_view_max_linear_adjustment')],
+            '-p',
+            ['d405_height_tolerance:=', LaunchConfiguration('d405_height_tolerance')],
         ],
         output='screen',
     ))
@@ -320,6 +343,61 @@ def generate_launch_description():
             'mode',
             default_value='navigation',
             description='Stretch driver mode used while this pipeline is running.',
+        ),
+        DeclareLaunchArgument(
+            'adaptive_workspace_enabled',
+            default_value='true',
+            description='Choose direct/lift/base/two-stage motion from independent height and XY reach tests.',
+        ),
+        DeclareLaunchArgument(
+            'workspace_height_tolerance',
+            default_value='0.04',
+            description='Allowed target-to-gripper contact height error before moving the lift (metres).',
+        ),
+        DeclareLaunchArgument(
+            'workspace_horizontal_min',
+            default_value='0.08',
+            description='Nominal minimum base-to-target XY reach without translating the base (metres).',
+        ),
+        DeclareLaunchArgument(
+            'workspace_horizontal_max',
+            default_value='0.70',
+            description='Preparation radius: maximum base-to-target XY distance before stage-one base motion (metres).',
+        ),
+        DeclareLaunchArgument(
+            'workspace_horizontal_tolerance',
+            default_value='0.05',
+            description='Acceptance margin added to both ends of the horizontal workspace (metres).',
+        ),
+        DeclareLaunchArgument(
+            'workspace_reselection_position_tolerance',
+            default_value='0.25',
+            description='Reuse the aligned base yaw when a failed/done workspace target is reselected within this 3D distance (metres).',
+        ),
+        DeclareLaunchArgument(
+            'd405_view_alignment_enabled',
+            default_value='true',
+            description='After close-range D435 yaw alignment, translate base forward/backward to place target in D405 view.',
+        ),
+        DeclareLaunchArgument(
+            'd405_view_target_base_x',
+            default_value='0.06',
+            description='Desired target X in base_link before switching to D405 (metres).',
+        ),
+        DeclareLaunchArgument(
+            'd405_view_base_x_tolerance',
+            default_value='0.035',
+            description='Allowed target base X error before switching to D405 (metres).',
+        ),
+        DeclareLaunchArgument(
+            'd405_view_max_linear_adjustment',
+            default_value='0.35',
+            description='Maximum close-range forward/backward base adjustment allowed for D405 visibility (metres).',
+        ),
+        DeclareLaunchArgument(
+            'd405_height_tolerance',
+            default_value='0.01',
+            description='Maximum D405 target-to-gripper contact height error allowed without lift adjustment (metres).',
         ),
         DeclareLaunchArgument(
             'restore_gamepad_on_shutdown',

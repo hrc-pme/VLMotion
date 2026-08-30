@@ -74,6 +74,9 @@ ros2_ws/src/camera_tf_calibration/
 ros2_ws/src/point_detection/
 ros2_ws/src/vlpoint/
 ros2_ws/src/vlservo/
+ros2_ws/src/audio_listener_worker/
+ros2_ws/src/dual_camera_point_compare/
+ros2_ws/outcmaes/
 
 # rosbag / dataset (大檔案)
 *.db3
@@ -91,3 +94,9 @@ metadata.yaml
 *.jpeg
 *.png
 *.bmp
+
+Outputs/
+maps/
+Script/
+ros2_ws/src/sllidar_ros2/
+ros2_ws/src/stretch_ai/
