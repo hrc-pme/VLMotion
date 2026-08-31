@@ -34,6 +34,12 @@ git clone git@github.com:hrc-pme/VLMotion.git
 cd VLMotion
  ```
 
+For an existing local repository, update to the latest version:
+```bash
+cd VLMotion
+git pull origin main
+ ```
+ 
 SSH access to the hrc-pme/VLMotion repository must be configured on the local machine before cloning.
 
 ### Method 1: Using Docker (Recommended)
