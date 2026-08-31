@@ -12,4 +12,10 @@ else
   exit 1
 fi
 
-"${cmd[@]}" up -d --build
+build_args=()
+if [[ "${INSTALL_FLASH_ATTN:-0}" == "1" ]]; then
+  build_args+=(--build-arg INSTALL_FLASH_ATTN=1)
+fi
+
+"${cmd[@]}" build "${build_args[@]}"
+"${cmd[@]}" up -d

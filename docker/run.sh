@@ -2,13 +2,15 @@
 
 set -euo pipefail
 
+compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
+
 # 用法:
 #   ./docker/run.sh [--root] [容器名稱] [ROS_DOMAIN_ID]
 #   ./docker/run.sh [--root] [ROS_DOMAIN_ID]
 # 說明:
 #   - 若第一個非 --root 的參數是數字 (0-232)，視為 ROS_DOMAIN_ID（容器名稱使用預設）
 #   - 若第一個是名稱，第二個是數字，則分別視為 容器名稱 與 ROS_DOMAIN_ID
-# 預設容器名稱: stretch3_vla_container
+# 預設容器名稱: vlmotion
 
 EXEC_USER=""
 DOMAIN_ID=""
@@ -18,7 +20,7 @@ if [[ "${1-}" == "--root" ]]; then
 fi
 
 # 解析參數：支援 --root、容器名稱與數字型 ROS_DOMAIN_ID
-CONTAINER_NAME="vlpoint-inference"
+CONTAINER_NAME="vlmotion"
 
 is_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]
@@ -43,9 +45,18 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+if docker compose version >/dev/null 2>&1; then
+  compose_cmd=(docker compose -f "$compose_file")
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose_cmd=(docker-compose -f "$compose_file")
+else
+  echo "找不到 'docker compose' 或 'docker-compose'" >&2
+  exit 1
+fi
+
 # 先確保服務已啟動（若尚未建立/啟動會自動 up -d）
 echo "確保 docker compose 服務已啟動（up -d）..."
-docker compose -f docker/docker-compose.yml up -d >/dev/null
+"${compose_cmd[@]}" up -d >/dev/null
 
 # 是否存在此容器（包含已停止）
 if ! docker ps -a --format '{{.Names}}' | grep -wq "${CONTAINER_NAME}"; then

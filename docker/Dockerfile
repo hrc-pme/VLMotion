@@ -1,5 +1,6 @@
-# Minimal LLM + ROS 2 Humble (GPU-ready)
-FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+# LLM training/inference + ROS 2 Humble (GPU-ready)
+# The devel image provides nvcc and headers required by DeepSpeed/custom CUDA ops.
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Taipei \
@@ -31,11 +32,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     ffmpeg \
+    libgomp1 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     wget \
     unzip \
+    vim \
+    netcat-openbsd \
     qtbase5-dev \
     qtchooser \
     qt5-qmake \
@@ -77,6 +81,11 @@ ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     ROS_DISTRO=humble \
     YOLO_CONFIG_DIR=/workspace/.ultralytics \
+    HF_HOME=/workspace/.cache/huggingface \
+    TRANSFORMERS_CACHE=/workspace/.cache/huggingface/transformers \
+    HF_DATASETS_CACHE=/workspace/.cache/huggingface/datasets \
+    TORCH_HOME=/workspace/.cache/torch \
+    PYTHONPATH=/workspace \
     ROS_DOMAIN_ID=0 \
     ROS_LOCALHOST_ONLY=0
 
@@ -98,7 +107,7 @@ RUN printf '%s\n' "if [ -f ~/.bashrc ]; then" \
 
 # Python deps
 # - 先行安裝 triton 依賴：sympy / mpmath，避免卸載 apt 版 sympy 失敗
-# - Torch 使用 CUDA 12.1 的輪檔
+# - Torch 使用 CUDA 12.8 的輪檔
 # - Transformers 與影像處理相關套件
 RUN pip3 install 'pip<25' 'setuptools<80,>=68' 'wheel>=0.40' 'packaging>=24.0' && \
     # 以 constraints 鎖定 numpy<2，避免後續安裝升級為 2.x
@@ -108,7 +117,7 @@ RUN pip3 install 'pip<25' 'setuptools<80,>=68' 'wheel>=0.40' 'packaging>=24.0' &
     pip3 install --no-cache-dir 'scipy>=1.11,<1.12' && \
     pip3 install --ignore-installed -c /tmp/constraints.txt sympy==1.14.0 "mpmath>=1.3.0" && \
     pip3 install -c /tmp/constraints.txt --index-url https://download.pytorch.org/whl/cu128 \
-      torch torchvision torchaudio && \
+      'torch>=2.8.0' 'torchvision>=0.23.0' torchaudio && \
     pip3 install -c /tmp/constraints.txt \
       transformers \
       accelerate \
@@ -122,13 +131,41 @@ RUN pip3 install 'pip<25' 'setuptools<80,>=68' 'wheel>=0.40' 'packaging>=24.0' &
       einops \
       pycocotools
 
+# Training dependencies live with the active Docker configuration. They are
+# copied separately to preserve Docker layer caching.
+COPY docker/requirements-training.txt /tmp/training-requirements.txt
+
+RUN pip3 install -c /tmp/constraints.txt -r /tmp/training-requirements.txt && \
+    pip3 install -c /tmp/constraints.txt \
+      deepspeed \
+      wandb \
+      tensorboard \
+      jupyter \
+      notebook \
+      ipywidgets \
+      black \
+      flake8 \
+      ninja
+
+# Flash Attention needs a supported GPU/toolchain and can take a long time to
+# compile. Enable it with: INSTALL_FLASH_ATTN=1 ./docker/build.sh
+ARG INSTALL_FLASH_ATTN=0
+RUN if [[ "${INSTALL_FLASH_ATTN}" == "1" ]]; then \
+      pip3 install flash-attn --no-build-isolation; \
+    else \
+      echo "Skipping optional flash-attn installation"; \
+    fi
+
 WORKDIR /workspace
 
 # Copy entire project into the image
 COPY . /workspace
 
 # Bootstrap a ros2_ws (non-fatal if empty)
-RUN mkdir -p /workspace/ros2_ws/src && \
+RUN mkdir -p /workspace/ros2_ws/src \
+      /workspace/.cache/huggingface/transformers \
+      /workspace/.cache/huggingface/datasets /workspace/.cache/torch \
+      /workspace/data /workspace/checkpoints /workspace/logs && \
     source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd /workspace/ros2_ws && colcon build --symlink-install || true
 
