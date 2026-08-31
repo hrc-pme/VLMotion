@@ -343,17 +343,17 @@ class ServerProcess:
     def __init__(self):
         self.controller_process = None
         self.model_worker_process = None
-        self.controller_url = "http://192.168.0.70:11000"
+        self.controller_url = "http://192.168.0.201:11000"
 
     def start_controller(self, host="0.0.0.0", port=11000):
         """啟動 Controller"""
         cmd = [sys.executable, "-m", "point.serve.controller", "--host", host, "--port", str(port)]
         print(f"Starting controller: {' '.join(cmd)}")
         self.controller_process = subprocess.Popen(cmd)
-        self.controller_url = f"http://{('192.168.0.70' if host in ['0.0.0.0', '::'] else host)}:{port}"
+        self.controller_url = f"http://{('192.168.0.201' if host in ['0.0.0.0', '::'] else host)}:{port}"
 
-    def start_model_worker(self, host="0.0.0.0", controller_url="http://192.168.0.70:11000",
-                           port=22000, worker_url="http://192.168.0.70:22000",
+    def start_model_worker(self, host="0.0.0.0", controller_url="http://192.168.0.201:11000",
+                           port=22000, worker_url="http://192.168.0.201:22000",
                            model_path="PME033541/vla13", load_4bit=True):
         """啟動 Model Worker"""
         cmd = [
@@ -387,7 +387,7 @@ class LLMWorkerThread(QThread):
     controller_connected = pyqtSignal(str)  # 發送 worker 地址
     worker_processing = pyqtSignal()  # Worker 開始處理
     
-    def __init__(self, controller_url="http://192.168.0.70:11000"):
+    def __init__(self, controller_url="http://192.168.0.201:11000"):
         super().__init__()
         self.controller_url = controller_url
         self.request_data = None
@@ -813,7 +813,7 @@ class WhitePointGUI(Node):
 
 class MainWindow(QMainWindow):
     """主視窗"""
-    def __init__(self, ros_node, signal_bridge, controller_url="http://192.168.0.70:11000", 
+    def __init__(self, ros_node, signal_bridge, controller_url="http://192.168.0.201:11000", 
                  model_path="PME033541/vla13"):
         super().__init__()
         self.ros_node = ros_node
@@ -1720,7 +1720,7 @@ def main(args=None):
     
     # 解析命令列參數
     parser = argparse.ArgumentParser(description="White Point GUI with LLM")
-    parser.add_argument("--controller-url", type=str, default="http://192.168.0.70:11000",
+    parser.add_argument("--controller-url", type=str, default="http://192.168.0.201:11000",
                        help="LLM controller URL")
     parser.add_argument("--model-path", type=str, default="PME033541/vla13",
                        help="Model path to load in the GUI")
