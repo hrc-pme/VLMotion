@@ -75,6 +75,19 @@ class LlavaMetaModel:
         self.config.mm_vision_select_layer = mm_vision_select_layer
         self.config.mm_vision_select_feature = mm_vision_select_feature
         self.config.mm_patch_merge_type = mm_patch_merge_type
+        for name in (
+            'mm_use_sam3_conditioning', 'mm_sam3_vision_tower',
+            'mm_sam3_blend_alpha', 'mm_sam3_mask_gamma',
+            'mm_sam3_device', 'mm_sam3_dtype',
+            'mm_sam3_candidate_attention',
+            'mm_sam3_candidate_loss_weight',
+        ):
+            value = getattr(model_args, name)
+            setattr(self.config, name, value)
+            setattr(vision_tower, name, value)
+        vision_tower.tune_sam3_fusion = getattr(
+            model_args, 'tune_sam3_fusion', False
+        )
 
         if getattr(self, 'mm_projector', None) is None:
             self.mm_projector = build_vision_projector(self.config)
@@ -87,7 +100,10 @@ class LlavaMetaModel:
         else:
             # In case it is frozen by LoRA
             for p in self.mm_projector.parameters():
-                p.requires_grad = True
+                # Quantized integer parameters cannot require gradients. They
+                # stay frozen while still passing input gradients to fusion.
+                if p.is_floating_point() or p.is_complex():
+                    p.requires_grad = True
 
         if pretrain_mm_mlp_adapter is not None:
             mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
@@ -95,6 +111,15 @@ class LlavaMetaModel:
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
             self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
+            fusion_weights = get_w(mm_projector_weights, 'sam3_fusion')
+            if fusion_weights and hasattr(vision_tower, 'sam3_fusion'):
+                vision_tower.sam3_fusion.load_state_dict(fusion_weights)
+            gate_weights = [
+                value for key, value in mm_projector_weights.items()
+                if key.endswith('sam3_fusion_gate')
+            ]
+            if gate_weights and hasattr(vision_tower, 'sam3_fusion_gate'):
+                vision_tower.sam3_fusion_gate.data.copy_(gate_weights[0])
 
 
 def unpad_image(tensor, original_size):
@@ -137,14 +162,18 @@ class LlavaMetaForCausalLM(ABC):
     def get_vision_tower(self):
         return self.get_model().get_vision_tower()
 
-    def encode_images(self, images):
-        image_features = self.get_model().get_vision_tower()(images)
+    def encode_images(self, images, image_sizes=None, candidate_targets=None):
+        image_features = self.get_model().get_vision_tower()(
+            images,
+            image_sizes=image_sizes,
+            candidate_targets=candidate_targets,
+        )
         image_features = self.get_model().mm_projector(image_features)
         return image_features
 
     def prepare_inputs_labels_for_multimodal(
         self, input_ids, position_ids, attention_mask, past_key_values, labels,
-        images, image_sizes=None
+        images, image_sizes=None, candidate_targets=None
     ):
         vision_tower = self.get_vision_tower()
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
@@ -154,7 +183,11 @@ class LlavaMetaForCausalLM(ABC):
             if type(images) is list:
                 images = [x.unsqueeze(0) if x.ndim == 3 else x for x in images]
             concat_images = torch.cat([image for image in images], dim=0)
-            image_features = self.encode_images(concat_images)
+            image_features = self.encode_images(
+                concat_images,
+                image_sizes=image_sizes,
+                candidate_targets=candidate_targets,
+            )
             split_sizes = [image.shape[0] for image in images]
             image_features = torch.split(image_features, split_sizes, dim=0)
             mm_patch_merge_type = getattr(self.config, 'mm_patch_merge_type', 'flat')
@@ -199,7 +232,11 @@ class LlavaMetaForCausalLM(ABC):
             else:
                 raise ValueError(f"Unexpected mm_patch_merge_type: {self.config.mm_patch_merge_type}")
         else:
-            image_features = self.encode_images(images)
+            image_features = self.encode_images(
+                images,
+                image_sizes=image_sizes,
+                candidate_targets=candidate_targets,
+            )
 
         # TODO: image start / end is not implemented here to support pretraining.
         if getattr(self.config, 'tune_mm_mlp_adapter', False) and getattr(self.config, 'mm_use_im_start_end', False):

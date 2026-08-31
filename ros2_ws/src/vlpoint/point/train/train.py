@@ -15,11 +15,16 @@
 #    limitations under the License.
 
 import os
+import ast
 import copy
 from dataclasses import dataclass, field
 import json
 import logging
 import pathlib
+import inspect
+import string
+import random
+import re
 from typing import Dict, Optional, Sequence, List
 
 import torch
@@ -34,6 +39,11 @@ from point.train.llava_trainer import LLaVATrainer
 from point import conversation as conversation_lib
 from point.model import *
 from point.mm_utils import tokenizer_image_token
+from point.candidate_contact_sheet import (
+    build_candidate_contact_sheet,
+    candidate_prompt_lines,
+    deduplicate_candidates,
+)
 
 from PIL import Image
 
@@ -70,6 +80,9 @@ class ModelArguments:
     mm_sam3_mask_gamma: float = field(default=1.0)
     mm_sam3_device: str = field(default="cpu")
     mm_sam3_dtype: str = field(default="auto")
+    mm_sam3_candidate_attention: bool = field(default=True)
+    mm_sam3_candidate_loss_weight: float = field(default=0.2)
+    tune_sam3_fusion: bool = field(default=True)
 
 
 @dataclass
@@ -80,6 +93,28 @@ class DataArguments:
     is_multimodal: bool = False
     image_folder: Optional[str] = field(default=None)
     image_aspect_ratio: str = 'square'
+    sam3_candidate_cache: Optional[str] = None
+    sam3_dynamic_candidate_view: bool = False
+    sam3_max_candidates: int = 16
+    sam3_intent_focused_targets: bool = False
+
+
+def supervised_intent_label(text: str) -> str:
+    """Build an explicit semantic class target for supervised training only."""
+    normalized = text.lower()
+    upward = re.search(
+        r"\b(?:up|upward|upwards|upstairs|ascend|ascending|rise|rising)\b"
+        r"|\bupper floor\b|\bhigher floor\b|\bgo higher\b|\bgoing higher\b",
+        normalized,
+    )
+    downward = re.search(
+        r"\b(?:down|downward|downwards|downstairs|descend|descending)\b"
+        r"|\blower floor\b",
+        normalized,
+    )
+    if bool(upward) == bool(downward):
+        return ""
+    return "UPWARD_TRAVEL" if upward else "DOWNWARD_TRAVEL"
 
 
 @dataclass
@@ -119,9 +154,9 @@ class TrainingArguments(transformers.TrainingArguments):
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
-    from deepspeed import zero
-    from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
     if hasattr(param, "ds_id"):
+        from deepspeed import zero
+        from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
         if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
             if not ignore_status:
                 logging.warning(f"{name}: param.ds_status != ZeroParamStatus.NOT_AVAILABLE: {param.ds_status}")
@@ -188,13 +223,61 @@ def find_all_linear_names(model):
     return list(lora_module_names)
 
 
+def ensure_floating_linear_children(module, device, dtype):
+    """Restore trainable adapters accidentally converted to 4-bit layers."""
+    try:
+        import bitsandbytes as bnb
+    except ImportError:
+        bnb = None
+
+    converted = 0
+    for name, child in list(module.named_children()):
+        if bnb is not None and isinstance(child, bnb.nn.Linear4bit):
+            quant_state = getattr(child.weight, "quant_state", None)
+            if quant_state is None:
+                # A module missing from the base checkpoint can be wrapped as
+                # Linear4bit before it ever gets quantized. In that case its
+                # Params4bit payload is still the freshly initialized floating
+                # tensor and can be copied without dequantization.
+                if not child.weight.data.is_floating_point():
+                    raise RuntimeError(
+                        f"Cannot dequantize {name}: quant_state is missing on "
+                        "a non-floating weight"
+                    )
+                weight = child.weight.data.to(device=device, dtype=dtype)
+            else:
+                weight = bnb.functional.dequantize_4bit(
+                    child.weight.data, quant_state
+                ).to(device=device, dtype=dtype)
+            replacement = torch.nn.Linear(
+                child.in_features,
+                child.out_features,
+                bias=child.bias is not None,
+                device=device,
+                dtype=dtype,
+            )
+            with torch.no_grad():
+                replacement.weight.copy_(weight)
+                if child.bias is not None:
+                    replacement.bias.copy_(
+                        child.bias.to(device=device, dtype=dtype)
+                    )
+            setattr(module, name, replacement)
+            converted += 1
+        else:
+            converted += ensure_floating_linear_children(child, device, dtype)
+    return converted
+
+
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                                    output_dir: str):
     """Collects the state dict and dump to disk."""
 
     if getattr(trainer.args, "tune_mm_mlp_adapter", False):
         # Only save Adapter
-        keys_to_match = ['mm_projector']
+        keys_to_match = [
+            'mm_projector', 'sam3_fusion', 'sam3_fusion_gate',
+        ]
         if getattr(trainer.args, "use_im_start_end", False):
             keys_to_match.extend(['embed_tokens', 'embed_in'])
 
@@ -322,8 +405,13 @@ def preprocess_multimodal(
     for source in sources:
         for sentence in source:
             if DEFAULT_IMAGE_TOKEN in sentence['value']:
+                # Keep every image token.  The upstream single-image code moved
+                # image tokens to the front by deleting all of them and adding
+                # one back, which silently collapsed two-image examples.
+                image_count = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
                 sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
-                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+                image_prefix = '\n'.join([DEFAULT_IMAGE_TOKEN] * image_count)
+                sentence['value'] = image_prefix + '\n' + sentence['value']
                 sentence['value'] = sentence['value'].strip()
                 if "mmtag" in conversation_lib.default_conversation.version:
                     sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '<Image>' + DEFAULT_IMAGE_TOKEN + '</Image>')
@@ -674,6 +762,39 @@ class LazySupervisedDataset(Dataset):
         self.tokenizer = tokenizer
         self.list_data_dict = list_data_dict
         self.data_args = data_args
+        self.sam3_candidate_cache = None
+        if data_args.sam3_dynamic_candidate_view:
+            if not data_args.sam3_candidate_cache:
+                raise ValueError(
+                    "--sam3_candidate_cache is required for dynamic candidate training"
+                )
+            with open(data_args.sam3_candidate_cache, "r") as candidate_file:
+                self.sam3_candidate_cache = json.load(candidate_file)
+        # Build an image-level union of all coordinate annotations. For paired
+        # up/down records this supervises the visual candidate head to find all
+        # valid buttons, while the language loss learns which subset matches
+        # the request. Nothing is cropped or written to a derived dataset.
+        candidate_targets = {}
+        for sample in list_data_dict:
+            image_value = sample.get("image")
+            if not isinstance(image_value, str):
+                continue
+            answer = next(
+                (turn.get("value", "") for turn in sample.get("conversations", [])
+                 if turn.get("from") == "gpt"),
+                "",
+            )
+            try:
+                points = ast.literal_eval(answer)
+            except (ValueError, SyntaxError):
+                continue
+            bucket = candidate_targets.setdefault(image_value, set())
+            for point in points if isinstance(points, list) else []:
+                if isinstance(point, (tuple, list)) and len(point) == 2:
+                    bucket.add((round(float(point[0]), 6), round(float(point[1]), 6)))
+        self.candidate_targets = {
+            key: sorted(value) for key, value in candidate_targets.items()
+        }
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -682,7 +803,9 @@ class LazySupervisedDataset(Dataset):
     def lengths(self):
         length_list = []
         for sample in self.list_data_dict:
-            img_tokens = 128 if 'image' in sample else 0
+            image_value = sample.get('image')
+            image_count = len(image_value) if isinstance(image_value, list) else int(image_value is not None)
+            img_tokens = 128 * image_count
             length_list.append(sum(len(conv['value'].split()) for conv in sample['conversations']) + img_tokens)
         return length_list
 
@@ -701,30 +824,193 @@ class LazySupervisedDataset(Dataset):
             sources = [sources]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
         if 'image' in sources[0]:
-            image_file = self.list_data_dict[i]['image']
+            image_value = self.list_data_dict[i]['image']
+            image_files = image_value if isinstance(image_value, list) else [image_value]
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
-            image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
-            if self.data_args.image_aspect_ratio == 'pad':
-                def expand2square(pil_img, background_color):
-                    width, height = pil_img.size
-                    if width == height:
-                        return pil_img
-                    elif width > height:
-                        result = Image.new(pil_img.mode, (width, width), background_color)
-                        result.paste(pil_img, (0, (width - height) // 2))
-                        return result
+
+            def expand2square(pil_img, background_color):
+                width, height = pil_img.size
+                if width == height:
+                    return pil_img
+                if width > height:
+                    result = Image.new(pil_img.mode, (width, width), background_color)
+                    result.paste(pil_img, (0, (width - height) // 2))
+                else:
+                    result = Image.new(pil_img.mode, (height, height), background_color)
+                    result.paste(pil_img, ((height - width) // 2, 0))
+                return result
+
+            raw_images = []
+            for image_file in image_files:
+                image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+                raw_images.append(image)
+
+            candidate_detections = None
+            if self.sam3_candidate_cache is not None and isinstance(image_value, str):
+                candidate_detections = deduplicate_candidates(copy.deepcopy(
+                    self.sam3_candidate_cache.get(image_value, [])
+                ))[:self.data_args.sam3_max_candidates]
+                # Confidence rank is correlated with labels in this small
+                # dataset. Shuffle every access so candidate letters cannot
+                # become a shortcut for direction or operability.
+                random.shuffle(candidate_detections)
+                for candidate_index, detection in enumerate(candidate_detections):
+                    detection["label"] = (
+                        string.ascii_uppercase[candidate_index]
+                        if candidate_index < len(string.ascii_uppercase)
+                        else f"P{candidate_index + 1}"
+                    )
+                if candidate_detections:
+                    raw_images.append(build_candidate_contact_sheet(
+                        raw_images[0], candidate_detections
+                    ))
+
+            processed_images = []
+            original_sizes = [image.size for image in raw_images]
+            for image in raw_images:
+                if self.data_args.image_aspect_ratio == 'pad':
+                    image = expand2square(
+                        image, tuple(int(x * 255) for x in processor.image_mean)
+                    )
+                processed_images.append(
+                    processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+                )
+            image = (
+                processed_images
+                if isinstance(image_value, list) or candidate_detections
+                else processed_images[0]
+            )
+            conversations = copy.deepcopy([e["conversations"] for e in sources])
+            if candidate_detections:
+                # Supervise the exact centers produced by SAM3.  The original
+                # annotations determine which candidates are correct and how
+                # many must be returned; snapping only removes coordinate
+                # regression noise between annotation centers and detections.
+                gpt_turn = next(
+                    turn for turn in conversations[0] if turn.get("from") == "gpt"
+                )
+                try:
+                    annotated_points = ast.literal_eval(gpt_turn["value"])
+                except (ValueError, SyntaxError):
+                    annotated_points = []
+                snapped_centers = []
+                selected_candidate_labels = []
+                for point in annotated_points if isinstance(annotated_points, list) else []:
+                    if not isinstance(point, (tuple, list)) or len(point) != 2:
+                        continue
+                    nearest = min(
+                        candidate_detections,
+                        key=lambda detection: (
+                            (detection["center"][0] - float(point[0])) ** 2
+                            + (detection["center"][1] - float(point[1])) ** 2
+                        ),
+                    )
+                    center = tuple(round(float(value), 4) for value in nearest["center"])
+                    if center not in snapped_centers:
+                        snapped_centers.append(center)
+                        selected_candidate_labels.append(nearest["label"])
+
+                operable_candidate_labels = []
+                for point in self.candidate_targets.get(image_value, []):
+                    nearest = min(
+                        candidate_detections,
+                        key=lambda detection: (
+                            (detection["center"][0] - float(point[0])) ** 2
+                            + (detection["center"][1] - float(point[1])) ** 2
+                        ),
+                    )
+                    if nearest["label"] not in operable_candidate_labels:
+                        operable_candidate_labels.append(nearest["label"])
+                all_candidate_labels = [
+                    detection["label"] for detection in candidate_detections
+                ]
+                non_operable_candidate_labels = [
+                    label for label in all_candidate_labels
+                    if label not in operable_candidate_labels
+                ]
+                request_mismatch_labels = [
+                    label for label in operable_candidate_labels
+                    if label not in selected_candidate_labels
+                ]
+
+                def render_labels(labels):
+                    return ", ".join(labels) if labels else "none"
+
+                if snapped_centers:
+                    if self.data_args.sam3_intent_focused_targets:
+                        human_text = next(
+                            turn.get("value", "") for turn in conversations[0]
+                            if turn.get("from") == "human"
+                        )
+                        intent_label = supervised_intent_label(human_text)
+                        if not intent_label:
+                            raise ValueError(
+                                "Intent-focused training requires an explicit semantic "
+                                f"label for {image_value!r}: {human_text!r}"
+                            )
+                        # The SAM3 auxiliary loss already supervises all
+                        # operable controls. Keep the language target compact
+                        # so request-dependent tokens dominate its loss.
+                        gpt_turn["value"] = (
+                            "Interpreted intent: "
+                            + intent_label
+                            + "\nSelected candidates: "
+                            + render_labels(selected_candidate_labels)
+                            + "\nFinal coordinates: "
+                            + str(snapped_centers)
+                        )
                     else:
-                        result = Image.new(pil_img.mode, (height, height), background_color)
-                        result.paste(pil_img, ((height - width) // 2, 0))
-                        return result
-                image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
-            else:
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
-            sources = preprocess_multimodal(
-                copy.deepcopy([e["conversations"] for e in sources]),
-                self.data_args)
+                        gpt_turn["value"] = (
+                            "Operable candidates: "
+                            + render_labels(operable_candidate_labels)
+                            + "\nNon-operable candidates: "
+                            + render_labels(non_operable_candidate_labels)
+                            + "\nOperable but not matched to this request: "
+                            + render_labels(request_mismatch_labels)
+                            + "\nSelected candidates: "
+                            + render_labels(selected_candidate_labels)
+                            + "\nFinal coordinates: "
+                            + str(snapped_centers)
+                        )
+
+                human = next(
+                    turn for turn in conversations[0] if turn.get("from") == "human"
+                )
+                human["value"] = human["value"].replace(
+                    DEFAULT_IMAGE_TOKEN,
+                    DEFAULT_IMAGE_TOKEN + "\n" + DEFAULT_IMAGE_TOKEN,
+                    1,
+                )
+                human["value"] += (
+                    "\nThe first image is the complete original scene. The second image "
+                    "contains enlarged SAM3 object candidates. Candidate centers in the "
+                    "original image are:\n"
+                    + "\n".join(candidate_prompt_lines(candidate_detections))
+                    + "\nUse the user's request and visible candidate features to choose "
+                    "the correct candidates. First identify which candidates are real, "
+                    "physically operable controls rather than displays, labels, or decorative "
+                    "objects, then select only operable controls whose visible meaning "
+                    "matches the user's request. The selected count is determined by the "
+                    "image and is not fixed."
+                )
+                if self.data_args.sam3_intent_focused_targets:
+                    human["value"] += (
+                        "\nFirst interpret the requested action semantically. The same scene "
+                        "paired with a different request must be allowed to select different "
+                        "candidates. Respond as:\nInterpreted intent: UPWARD_TRAVEL or "
+                        "DOWNWARD_TRAVEL\nSelected candidates: B, ...\n"
+                        "Final coordinates: [(x1, y1), ...]"
+                    )
+                else:
+                    human["value"] += (
+                        " Classify every candidate. Respond as:\n"
+                        "Operable candidates: A, ...\nNon-operable candidates: C, ...\n"
+                        "Operable but not matched to this request: D, ...\n"
+                        "Selected candidates: B, ...\n"
+                        "Final coordinates: [(x1, y1), ...]"
+                    )
+            sources = preprocess_multimodal(conversations, self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
         data_dict = preprocess(
@@ -738,6 +1024,13 @@ class LazySupervisedDataset(Dataset):
         # image exist in the data
         if 'image' in self.list_data_dict[i]:
             data_dict['image'] = image
+            data_dict['image_size'] = (
+                original_sizes if isinstance(image, list) else original_sizes[0]
+            )
+            if isinstance(image_value, str):
+                data_dict['candidate_targets'] = torch.tensor(
+                    self.candidate_targets.get(image_value, []), dtype=torch.float32
+                ).reshape(-1, 2)
         elif self.data_args.is_multimodal:
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
@@ -771,10 +1064,40 @@ class DataCollatorForSupervisedDataset(object):
 
         if 'image' in instances[0]:
             images = [instance['image'] for instance in instances]
-            if all(x is not None and x.shape == images[0].shape for x in images):
+            if isinstance(images[0], list):
+                # llava_arch consumes image features in token order across the
+                # batch, so preserve each example's ordered image list.
+                batch['images'] = [image for group in images for image in group]
+                batch['image_sizes'] = [
+                    size for instance in instances for size in instance.get('image_size')
+                ]
+            elif all(x is not None and x.shape == images[0].shape for x in images):
                 batch['images'] = torch.stack(images)
+                batch['image_sizes'] = [instance.get('image_size') for instance in instances]
             else:
                 batch['images'] = images
+                batch['image_sizes'] = [instance.get('image_size') for instance in instances]
+
+            if 'candidate_targets' in instances[0]:
+                target_groups = []
+                if isinstance(images[0], list):
+                    for instance, image_group in zip(instances, images):
+                        target_groups.append(instance['candidate_targets'])
+                        target_groups.extend([
+                            torch.empty(0, 2, dtype=torch.float32)
+                            for _ in image_group[1:]
+                        ])
+                else:
+                    target_groups = [x['candidate_targets'] for x in instances]
+                max_targets = max(x.shape[0] for x in target_groups)
+                padded_targets = torch.full(
+                    (len(target_groups), max_targets, 2), -1.0, dtype=torch.float32
+                )
+                for index, targets in enumerate(target_groups):
+                    count = targets.shape[0]
+                    if count:
+                        padded_targets[index, :count] = targets
+                batch['candidate_targets'] = padded_targets
 
         return batch
 
@@ -805,12 +1128,15 @@ def train(attn_implementation=None):
         from transformers import BitsAndBytesConfig
         bnb_model_from_pretrained_args.update(dict(
             device_map={"": training_args.device},
-            load_in_4bit=training_args.bits == 4,
-            load_in_8bit=training_args.bits == 8,
             quantization_config=BitsAndBytesConfig(
                 load_in_4bit=training_args.bits == 4,
                 load_in_8bit=training_args.bits == 8,
-                llm_int8_skip_modules=["mm_projector"],
+                # Keep the trainable multimodal layers in a normal floating
+                # dtype. bitsandbytes Linear4bit modules are intended for
+                # frozen pretrained weights, not newly initialized adapters.
+                llm_int8_skip_modules=[
+                    "mm_projector", "sam3_fusion", "sam3_candidate_head"
+                ],
                 llm_int8_threshold=6.0,
                 llm_int8_has_fp16_weight=False,
                 bnb_4bit_compute_dtype=compute_dtype,
@@ -827,6 +1153,7 @@ def train(attn_implementation=None):
                 model_args.model_name_or_path,
                 config=config,
                 cache_dir=training_args.cache_dir,
+                low_cpu_mem_usage=True,
                 **bnb_model_from_pretrained_args
             )
         else:
@@ -835,6 +1162,7 @@ def train(attn_implementation=None):
                 cache_dir=training_args.cache_dir,
                 attn_implementation=attn_implementation,
                 torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                low_cpu_mem_usage=True,
                 **bnb_model_from_pretrained_args
             )
     else:
@@ -843,6 +1171,7 @@ def train(attn_implementation=None):
             cache_dir=training_args.cache_dir,
             attn_implementation=attn_implementation,
             torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+            low_cpu_mem_usage=True,
             **bnb_model_from_pretrained_args
         )
     model.config.use_cache = False
@@ -927,7 +1256,16 @@ def train(attn_implementation=None):
         )
         
         vision_tower = model.get_vision_tower()
+        if hasattr(vision_tower, "ensure_floating_sam3_fusion"):
+            vision_tower.ensure_floating_sam3_fusion(
+                device=training_args.device,
+                dtype=torch.bfloat16 if training_args.bf16 else torch.float16,
+            )
         vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
+        if hasattr(vision_tower, "sam3_candidate_head"):
+            vision_tower.sam3_candidate_head.to(
+                device=training_args.device, dtype=torch.float32
+            )
 
         data_args.image_processor = vision_tower.image_processor
         data_args.is_multimodal = True
@@ -938,9 +1276,49 @@ def train(attn_implementation=None):
 
         model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
         if model_args.tune_mm_mlp_adapter:
-            model.requires_grad_(False)
-            for p in model.get_model().mm_projector.parameters():
+            # PEFT has already marked only LoRA parameters trainable. Do not
+            # freeze them again when jointly training the multimodal adapter.
+            if not training_args.lora_enable:
+                model.requires_grad_(False)
+            mm_projector = model.get_model().mm_projector
+            converted_layers = ensure_floating_linear_children(
+                mm_projector,
+                device=training_args.device,
+                dtype=compute_dtype,
+            )
+            if converted_layers:
+                rank0_print(
+                    f"Restored {converted_layers} quantized mm_projector layer(s) "
+                    f"to trainable {compute_dtype}."
+                )
+            for p in mm_projector.parameters():
+                if not (p.is_floating_point() or p.is_complex()):
+                    raise RuntimeError(
+                        "mm_projector still contains non-floating parameters"
+                    )
                 p.requires_grad = True
+
+        # SAM3 and CLIP remain frozen; only the small cross-vision spatial
+        # adapter learns from the supervised relation examples.
+        if model_args.mm_use_sam3_conditioning and model_args.tune_sam3_fusion:
+            # from_pretrained initializes missing standalone parameters after
+            # constructing the model and can reset this new gate to zero. A
+            # A zero gate blocks the gradient path into fusion, so restore the
+            # requested nonzero starting value before optimization.
+            with torch.no_grad():
+                vision_tower.sam3_fusion_gate.fill_(
+                    model_args.mm_sam3_blend_alpha
+                )
+            for p in vision_tower.sam3_fusion.parameters():
+                p.requires_grad = True
+            for p in vision_tower.sam3_candidate_head.parameters():
+                p.requires_grad = True
+            vision_tower.sam3_fusion_gate.requires_grad = True
+        model.config.tune_sam3_fusion = model_args.tune_sam3_fusion
+        model.config.mm_sam3_candidate_loss_weight = (
+            model_args.mm_sam3_candidate_loss_weight
+        )
+        training_args.tune_sam3_fusion = model_args.tune_sam3_fusion
 
         model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
         if training_args.freeze_mm_mlp_adapter:
@@ -971,10 +1349,12 @@ def train(attn_implementation=None):
 
     data_module = make_supervised_data_module(tokenizer=tokenizer,
                                               data_args=data_args)
-    trainer = LLaVATrainer(model=model,
-                    tokenizer=tokenizer,
-                    args=training_args,
-                    **data_module)
+    trainer_kwargs = dict(model=model, args=training_args, **data_module)
+    if "processing_class" in inspect.signature(LLaVATrainer.__init__).parameters:
+        trainer_kwargs["processing_class"] = tokenizer
+    else:
+        trainer_kwargs["tokenizer"] = tokenizer
+    trainer = LLaVATrainer(**trainer_kwargs)
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         trainer.train(resume_from_checkpoint=True)

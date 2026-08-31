@@ -22,6 +22,14 @@ class CLIPVisionTower(nn.Module):
         self.mm_sam3_device = getattr(args, 'mm_sam3_device', 'cpu')
         self.mm_sam3_dtype = getattr(args, 'mm_sam3_dtype', 'auto')
         self.mm_sam3_unload_after_forward = getattr(args, 'mm_sam3_unload_after_forward', False)
+        self.tune_sam3_fusion = getattr(args, 'tune_sam3_fusion', False)
+        self.mm_sam3_candidate_attention = getattr(
+            args, 'mm_sam3_candidate_attention', True
+        )
+        self.mm_sam3_candidate_loss_weight = float(getattr(
+            args, 'mm_sam3_candidate_loss_weight', 0.2
+        ))
+        self.candidate_attention_loss = None
         self.sam3_is_loaded = False
 
         if not delay_load:
@@ -30,6 +38,96 @@ class CLIPVisionTower(nn.Module):
             self.load_model()
         else:
             self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
+
+        # This adapter is the only trainable part of the two vision backbones.
+        # It learns how SAM3 object features and absolute 2-D patch coordinates
+        # should change CLIP's semantic patch representation.
+        hidden_size = self.config.hidden_size
+        self.sam3_fusion = nn.Sequential(
+            nn.LayerNorm(hidden_size * 2 + 4),
+            nn.Linear(hidden_size * 2 + 4, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        self.sam3_fusion_gate = nn.Parameter(
+            torch.tensor(float(self.mm_sam3_blend_alpha))
+        )
+        # A soft, trainable proposal map over SAM3 object-aware patches.  This
+        # is produced inside every forward pass from the original image; no
+        # pre-cropped candidates or candidate labels are needed in the data.
+        candidate_hidden = max(64, hidden_size // 4)
+        self.sam3_candidate_head = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, candidate_hidden),
+            nn.GELU(),
+            nn.Linear(candidate_hidden, 1),
+        )
+        # Start close to the original CLIP path while keeping a live gradient
+        # route into candidate attention from the first effective update.
+        nn.init.normal_(self.sam3_fusion[-1].weight, mean=0.0, std=1e-5)
+        nn.init.zeros_(self.sam3_fusion[-1].bias)
+        nn.init.zeros_(self.sam3_candidate_head[-1].weight)
+        nn.init.zeros_(self.sam3_candidate_head[-1].bias)
+        self.sam3_fusion.requires_grad_(self.tune_sam3_fusion)
+        self.sam3_fusion_gate.requires_grad_(self.tune_sam3_fusion)
+        self.sam3_candidate_head.requires_grad_(self.tune_sam3_fusion)
+
+    def ensure_floating_sam3_fusion(self, device=None, dtype=None):
+        """Undo bitsandbytes conversion while preserving learned adapter weights."""
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            bnb = None
+
+        def restore(module, target_dtype):
+            for name, child in list(module.named_children()):
+                if bnb is not None and isinstance(child, bnb.nn.Linear4bit):
+                    quant_state = getattr(child.weight, "quant_state", None)
+                    if quant_state is None:
+                        # Transformers replaces Linear modules before loading
+                        # checkpoint tensors. SAM3 adapters do not exist in the
+                        # RoboPoint base, so their newly initialized Params4bit
+                        # still contain ordinary floating-point values and have
+                        # no quantization metadata. Preserve those values
+                        # directly instead of trying to dequantize them.
+                        if not child.weight.data.is_floating_point():
+                            raise RuntimeError(
+                                f"Cannot restore SAM3 adapter {name}: missing "
+                                "quant_state on a non-floating weight"
+                            )
+                        weight = child.weight.data.to(
+                            device=device, dtype=target_dtype
+                        )
+                    else:
+                        weight = bnb.functional.dequantize_4bit(
+                            child.weight.data, quant_state
+                        ).to(device=device, dtype=target_dtype)
+                    replacement = nn.Linear(
+                        child.in_features,
+                        child.out_features,
+                        bias=child.bias is not None,
+                        device=device,
+                        dtype=target_dtype,
+                    )
+                    with torch.no_grad():
+                        replacement.weight.copy_(weight)
+                        if child.bias is not None:
+                            replacement.bias.copy_(
+                                child.bias.to(device=device, dtype=target_dtype)
+                            )
+                    setattr(module, name, replacement)
+                else:
+                    restore(child, target_dtype)
+
+        fusion_dtype = dtype or torch.float32
+        restore(self.sam3_fusion, fusion_dtype)
+        restore(self.sam3_candidate_head, torch.float32)
+        self.sam3_fusion.to(device=device, dtype=fusion_dtype)
+        # Keep this small scoring head in FP32. Its early gradients are much
+        # smaller than BF16 resolution while fusion warms up.
+        self.sam3_candidate_head.to(device=device, dtype=torch.float32)
+        self.sam3_fusion.requires_grad_(self.tune_sam3_fusion)
+        self.sam3_candidate_head.requires_grad_(self.tune_sam3_fusion)
 
     def load_sam3_model(self):
         if self.sam3_is_loaded:
@@ -41,29 +139,31 @@ class CLIPVisionTower(nn.Module):
             )
 
         try:
-            from transformers import Sam3Model, Sam3ImageProcessor
+            from .sam3_encoder import Sam3VisionTower
         except ImportError as exc:
             raise ImportError(
                 "Transformers with SAM3 support is required when "
                 "mm_use_sam3_conditioning=True."
             ) from exc
 
-        self.sam3_image_processor = Sam3ImageProcessor.from_pretrained(self.mm_sam3_vision_tower)
-        sam3_model = Sam3Model.from_pretrained(self.mm_sam3_vision_tower)
-        self.sam3_vision_tower = sam3_model.vision_encoder
-        del sam3_model
-        self.sam3_vision_tower.requires_grad_(False)
-        self.sam3_vision_tower.eval()
+        self.sam3_tower = Sam3VisionTower(
+            self.mm_sam3_vision_tower,
+            args=self,
+            delay_load=False,
+        )
+        self.sam3_image_processor = self.sam3_tower.image_processor
+        self.sam3_tower.vision_tower.requires_grad_(False)
+        self.sam3_tower.vision_tower.eval()
         sam3_device = self.device if self.mm_sam3_device in (None, '', 'vision', 'clip') else torch.device(self.mm_sam3_device)
         sam3_dtype = self._resolve_sam3_dtype(sam3_device)
-        self.sam3_vision_tower.to(device=sam3_device, dtype=sam3_dtype)
+        self.sam3_tower.to(device=sam3_device, dtype=sam3_dtype)
         self.sam3_is_loaded = True
 
     def unload_sam3_model(self):
         if not self.sam3_is_loaded:
             return
-        if hasattr(self, "sam3_vision_tower"):
-            del self.sam3_vision_tower
+        if hasattr(self, "sam3_tower"):
+            del self.sam3_tower
         self.sam3_is_loaded = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -88,15 +188,16 @@ class CLIPVisionTower(nn.Module):
             if height is not None and width is not None:
                 return int(height), int(width)
 
-        backbone_config = getattr(self.sam3_vision_tower.config, "backbone_config", None)
+        backbone_config = getattr(self.sam3_tower.vision_tower.config, "backbone_config", None)
         image_size = getattr(backbone_config, "image_size", 1008)
         if isinstance(image_size, (tuple, list)):
             return int(image_size[0]), int(image_size[1])
         return int(image_size), int(image_size)
 
-    def _apply_sam3_conditioning(self, images: torch.Tensor) -> torch.Tensor:
+    def _sam3_features_for_clip(self, images: torch.Tensor, clip_features: torch.Tensor):
+        """Return SAM3 object features aligned with CLIP's patch grid."""
         if (not self.mm_use_sam3_conditioning) or images.ndim != 4 or images.shape[1] != 3:
-            return images
+            return None
 
         self.load_sam3_model()
 
@@ -119,46 +220,146 @@ class CLIPVisionTower(nn.Module):
         sam3_std = torch.tensor(self.sam3_image_processor.image_std, device=sam3_pixels.device, dtype=sam3_pixels.dtype).view(1, 3, 1, 1)
         sam3_pixels = (sam3_pixels - sam3_mean) / sam3_std
 
-        sam3_param = next(self.sam3_vision_tower.parameters())
-        sam3_outputs = self.sam3_vision_tower(
-            pixel_values=sam3_pixels.to(device=sam3_param.device, dtype=sam3_param.dtype),
-            return_dict=True,
-        )
-        sam3_features = sam3_outputs.last_hidden_state.to(device=images_fp32.device, dtype=torch.float32)
-        saliency = sam3_features.norm(dim=-1)
-
-        num_tokens = saliency.shape[1]
-        grid_size = int(num_tokens ** 0.5)
-        if grid_size * grid_size != num_tokens:
-            warnings.warn(
-                "SAM3 conditioning expected a square token grid; skipping conditioning. "
-                f"num_tokens={num_tokens}"
+        sam3_param = next(self.sam3_tower.vision_tower.parameters())
+        # SAM3 stays frozen. Gradients are required only through sam3_fusion.
+        with torch.no_grad():
+            sam3_outputs = self.sam3_tower.vision_tower(
+                pixel_values=sam3_pixels.to(device=sam3_param.device, dtype=sam3_param.dtype),
+                return_dict=True,
             )
-            return images
+        sam3_features = sam3_outputs.last_hidden_state.to(device=images_fp32.device, dtype=torch.float32)
 
-        saliency = saliency.view(saliency.shape[0], 1, grid_size, grid_size)
-        saliency = saliency - saliency.amin(dim=(2, 3), keepdim=True)
-        saliency = saliency / saliency.amax(dim=(2, 3), keepdim=True).clamp_min(1e-6)
+        sam_tokens = sam3_features.shape[1]
+        sam_grid = int(sam_tokens ** 0.5)
+        clip_tokens = clip_features.shape[1]
+        clip_grid = int(clip_tokens ** 0.5)
+        if sam_grid * sam_grid != sam_tokens or clip_grid * clip_grid != clip_tokens:
+            warnings.warn(
+                "SAM3/CLIP fusion expected square patch grids; skipping fusion. "
+                f"sam_tokens={sam_tokens}, clip_tokens={clip_tokens}"
+            )
+            return None
 
-        if self.mm_sam3_mask_gamma != 1.0:
-            saliency = saliency.clamp_min(1e-6).pow(self.mm_sam3_mask_gamma)
-
-        saliency = F.interpolate(
-            saliency,
-            size=rgb_images.shape[-2:],
+        # Align SAM3's spatial grid with CLIP. Channel interpolation is a
+        # parameter-free bridge; the trainable adapter below learns the useful
+        # combination without having to unfreeze either large backbone.
+        sam3_features = sam3_features.transpose(1, 2).reshape(
+            sam3_features.shape[0], sam3_features.shape[2], sam_grid, sam_grid
+        )
+        sam3_features = F.interpolate(
+            sam3_features,
+            size=(clip_grid, clip_grid),
             mode="bilinear",
             align_corners=False,
-        ).clamp(0.0, 1.0)
+        ).flatten(2).transpose(1, 2)
+        sam3_features = F.interpolate(
+            sam3_features.unsqueeze(1),
+            size=(clip_tokens, clip_features.shape[-1]),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(1)
+        return F.layer_norm(sam3_features, (sam3_features.shape[-1],))
 
-        alpha = max(0.0, min(1.0, self.mm_sam3_blend_alpha))
-        focused_rgb = rgb_images * (0.5 + 0.5 * saliency)
-        fused_rgb = ((1.0 - alpha) * rgb_images + alpha * focused_rgb).clamp(0.0, 1.0)
-        fused_normalized = (fused_rgb - clip_mean) / clip_std
-        return fused_normalized.to(dtype=input_dtype)
+    def _spatial_features(self, batch_size, token_count, device, dtype, image_sizes=None):
+        grid = int(token_count ** 0.5)
+        if grid * grid != token_count:
+            coords = torch.zeros(batch_size, token_count, 4, device=device, dtype=dtype)
+            valid = torch.ones(batch_size, token_count, device=device, dtype=torch.bool)
+            return coords, valid
 
-    def _apply_image_conditioning(self, images: torch.Tensor) -> torch.Tensor:
+        axis = (torch.arange(grid, device=device, dtype=torch.float32) + 0.5) / grid
+        yy_pad, xx_pad = torch.meshgrid(axis, axis, indexing="ij")
+        xx_pad = xx_pad.reshape(1, token_count).expand(batch_size, -1)
+        yy_pad = yy_pad.reshape(1, token_count).expand(batch_size, -1)
+        xx, yy = xx_pad.clone(), yy_pad.clone()
+        valid = torch.ones_like(xx, dtype=torch.bool)
+
+        # CLIP receives a square letterboxed image. Convert patch locations
+        # back to normalized coordinates in the unpadded original image so
+        # portrait training images and square inference images share geometry.
+        if image_sizes is not None and len(image_sizes) == batch_size:
+            for index, size in enumerate(image_sizes):
+                width, height = float(size[0]), float(size[1])
+                if width < height:
+                    scale = width / height
+                    offset = (1.0 - scale) / 2.0
+                    valid[index] = (xx_pad[index] >= offset) & (xx_pad[index] <= offset + scale)
+                    xx[index] = (xx_pad[index] - offset) / max(scale, 1e-6)
+                elif height < width:
+                    scale = height / width
+                    offset = (1.0 - scale) / 2.0
+                    valid[index] = (yy_pad[index] >= offset) & (yy_pad[index] <= offset + scale)
+                    yy[index] = (yy_pad[index] - offset) / max(scale, 1e-6)
+
+        xx = xx.clamp(0.0, 1.0)
+        yy = yy.clamp(0.0, 1.0)
+        x_signed, y_signed = xx * 2.0 - 1.0, yy * 2.0 - 1.0
+        coords = torch.stack(
+            (x_signed, y_signed, x_signed.square(), y_signed.square()), dim=-1
+        ).to(dtype=dtype)
+        coords = coords.masked_fill(~valid.unsqueeze(-1), 0)
+        return coords, valid
+
+    def _candidate_supervision_loss(self, logits, spatial, valid_patches, targets):
+        if targets is None:
+            return None
+        targets = targets.to(device=logits.device, dtype=torch.float32)
+        patch_xy = (spatial[..., :2].to(dtype=torch.float32) + 1.0) / 2.0
+        losses = []
+        for batch_index in range(logits.shape[0]):
+            target = targets[batch_index]
+            target = target[(target[:, 0] >= 0) & (target[:, 1] >= 0)]
+            if target.numel() == 0:
+                continue
+            distance_sq = (
+                patch_xy[batch_index, :, None, :] - target[None, :, :]
+            ).square().sum(dim=-1)
+            heatmap = torch.exp(-distance_sq.min(dim=-1).values / (2.0 * 0.04 ** 2))
+            per_patch = F.binary_cross_entropy_with_logits(
+                logits[batch_index, :, 0].float(), heatmap, reduction="none"
+            )
+            weights = 1.0 + 8.0 * heatmap
+            mask = valid_patches[batch_index].float()
+            losses.append((per_patch * weights * mask).sum() / (weights * mask).sum().clamp_min(1.0))
+        return torch.stack(losses).mean() if losses else None
+
+    def _fuse_sam3_clip(self, images, clip_features, image_sizes=None, candidate_targets=None):
+        self.candidate_attention_loss = None
+        if not self.mm_use_sam3_conditioning:
+            return clip_features
         try:
-            return self._apply_sam3_conditioning(images)
+            sam_features = self._sam3_features_for_clip(images, clip_features)
+            if sam_features is None:
+                return clip_features
+            work_dtype = self.sam3_fusion[1].weight.dtype
+            clip_work = clip_features.to(dtype=work_dtype)
+            sam_work = sam_features.to(device=clip_work.device, dtype=work_dtype)
+            if self.mm_sam3_candidate_attention:
+                candidate_dtype = next(
+                    self.sam3_candidate_head.parameters()
+                ).dtype
+                candidate_logits = self.sam3_candidate_head(
+                    sam_work.to(dtype=candidate_dtype)
+                )
+                candidate_scores = torch.sigmoid(candidate_logits).to(dtype=work_dtype)
+                gamma = max(float(self.mm_sam3_mask_gamma), 1e-3)
+                candidate_scores = candidate_scores.pow(gamma)
+                # The zero-initialized head starts at a neutral multiplier of
+                # one. Supervised coordinate loss then learns which SAM3
+                # object patches deserve more or less attention.
+                sam_work = sam_work * (0.5 + candidate_scores)
+                self.last_candidate_attention = candidate_scores.detach()
+            spatial, valid_patches = self._spatial_features(
+                clip_work.shape[0], clip_work.shape[1], clip_work.device,
+                work_dtype, image_sizes=image_sizes
+            )
+            if self.mm_sam3_candidate_attention:
+                self.candidate_attention_loss = self._candidate_supervision_loss(
+                    candidate_logits, spatial, valid_patches, candidate_targets
+                )
+            delta = self.sam3_fusion(torch.cat((clip_work, sam_work, spatial), dim=-1))
+            gate = torch.tanh(self.sam3_fusion_gate.to(dtype=work_dtype))
+            return (clip_work + gate * delta).to(dtype=clip_features.dtype)
         finally:
             if self.mm_sam3_unload_after_forward:
                 self.unload_sam3_model()
@@ -184,19 +385,28 @@ class CLIPVisionTower(nn.Module):
             raise ValueError(f'Unexpected select feature: {self.select_feature}')
         return image_features
 
-    @torch.no_grad()
-    def forward(self, images):
+    def forward(self, images, image_sizes=None, candidate_targets=None):
         if type(images) is list:
             image_features = []
             for image in images:
-                image_input = self._apply_image_conditioning(image.unsqueeze(0))
-                image_forward_out = self.vision_tower(image_input.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
+                image_input = image.unsqueeze(0).to(device=self.device, dtype=self.dtype)
+                with torch.no_grad():
+                    image_forward_out = self.vision_tower(image_input, output_hidden_states=True)
                 image_feature = self.feature_select(image_forward_out).to(image.dtype)
+                image_feature = self._fuse_sam3_clip(
+                    image.unsqueeze(0), image_feature,
+                    image_sizes=None, candidate_targets=None
+                )
                 image_features.append(image_feature)
         else:
-            image_input = self._apply_image_conditioning(images)
-            image_forward_outs = self.vision_tower(image_input.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
+            image_input = images.to(device=self.device, dtype=self.dtype)
+            with torch.no_grad():
+                image_forward_outs = self.vision_tower(image_input, output_hidden_states=True)
             image_features = self.feature_select(image_forward_outs).to(images.dtype)
+            image_features = self._fuse_sam3_clip(
+                images, image_features, image_sizes=image_sizes,
+                candidate_targets=candidate_targets
+            )
 
         return image_features
 

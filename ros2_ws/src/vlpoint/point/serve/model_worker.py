@@ -1435,9 +1435,9 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=22000)
     parser.add_argument("--worker-address", type=str,
-        default="http://10.0.0.1:22000")
+        default="http://127.0.0.1:22000")
     parser.add_argument("--controller-address", type=str,
-        default="http://10.0.0.1:11000")
+        default="http://127.0.0.1:11000")
     parser.add_argument("--model-path", type=str, default="PME033541/vla13")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--model-name", type=str)

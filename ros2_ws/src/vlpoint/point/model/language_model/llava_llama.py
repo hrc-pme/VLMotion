@@ -72,6 +72,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         image_sizes: Optional[List[List[int]]] = None,
+        candidate_targets: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
         cache_position=None
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -91,10 +92,11 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
                 past_key_values,
                 labels,
                 images,
-                image_sizes
+                image_sizes,
+                candidate_targets,
             )
 
-        return super().forward(
+        outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -106,6 +108,18 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict
         )
+        candidate_loss = getattr(
+            self.get_vision_tower(), "candidate_attention_loss", None
+        )
+        if candidate_loss is not None and labels is not None:
+            weight = float(getattr(
+                self.config, "mm_sam3_candidate_loss_weight", 0.2
+            ))
+            if hasattr(outputs, "loss"):
+                outputs.loss = outputs.loss + weight * candidate_loss
+            else:
+                outputs = (outputs[0] + weight * candidate_loss,) + outputs[1:]
+        return outputs
 
     @torch.no_grad()
     def generate(

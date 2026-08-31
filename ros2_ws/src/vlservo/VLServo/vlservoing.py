@@ -349,16 +349,16 @@ class ServerProcess:
     def __init__(self):
         self.controller_process = None
         self.model_worker_process = None
-        self.controller_url = "http://10.0.0.1:11000"
+        self.controller_url = "http://127.0.0.1:11000"
 
     def start_controller(self, host="0.0.0.0", port=11000):
         cmd = [sys.executable, "-m", "point.serve.controller", "--host", host, "--port", str(port)]
         logger.info(f"Starting controller: {' '.join(cmd)}")
         self.controller_process = subprocess.Popen(cmd)
-        self.controller_url = f"http://{('10.0.0.1' if host in ['0.0.0.0', '::'] else host)}:{port}"
+        self.controller_url = f"http://{('127.0.0.1' if host in ['0.0.0.0', '::'] else host)}:{port}"
 
-    def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
-                           port=22000, worker_url="http://10.0.0.1:22000",
+    def start_model_worker(self, host="0.0.0.0", controller_url="http://127.0.0.1:11000",
+                           port=22000, worker_url="http://127.0.0.1:22000",
                            model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True):
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
@@ -387,7 +387,7 @@ class ModelWorkerThread(QThread):
     error_occurred = pyqtSignal(str)
     finished_request = pyqtSignal()
 
-    def __init__(self, controller_url="http://10.0.0.1:11000"):
+    def __init__(self, controller_url="http://127.0.0.1:11000"):
         super().__init__()
         self.controller_url = controller_url
         self.request_data = None
@@ -2307,7 +2307,7 @@ class RoboPointMainWindow(QMainWindow):
 
 def main():
     parser = argparse.ArgumentParser(description="RoboPoint Visual Servoing GUI")
-    parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000", help="Controller URL")
+    parser.add_argument("--controller-url", type=str, default="http://127.0.0.1:11000", help="Controller URL")
     parser.add_argument("--model-path", type=str, default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", help="Model path")
     parser.add_argument("--load-4bit", action="store_true", default=True, help="Load model in 4-bit mode")
     parser.add_argument('-r', '--remote', action='store_true', help='Receive camera images from a remote robot (subscribe to robot IP).')

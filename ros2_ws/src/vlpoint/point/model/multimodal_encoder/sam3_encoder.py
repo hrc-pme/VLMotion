@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from transformers import (
-    Sam3VisionModel,
+    AutoConfig,
+    Sam3Model,
     Sam3ImageProcessor,
-    Sam3VisionConfig,
 )
 
 
@@ -43,17 +43,26 @@ class Sam3VisionTower(nn.Module):
             self.load_model()
         else:
             # light-weight config-only path
-            self.cfg_only = Sam3VisionConfig.from_pretrained(self.vision_tower_name)
+            full_config = AutoConfig.from_pretrained(self.vision_tower_name)
+            detector_config = getattr(full_config, "detector_config", full_config)
+            self.cfg_only = getattr(detector_config, "vision_config", detector_config)
 
     def load_model(self, device_map=None):
         if self.is_loaded:
             return
 
         self.image_processor = Sam3ImageProcessor.from_pretrained(self.vision_tower_name)
-        self.vision_tower = Sam3VisionModel.from_pretrained(
+        # facebook/sam3 is published as a full SAM3/SAM3-video checkpoint.  A
+        # direct Sam3VisionModel.from_pretrained() call does not strip its
+        # detector_model.vision_encoder prefix and silently initializes a new
+        # vision backbone. Load the matching full model first, then retain the
+        # pretrained vision encoder only.
+        sam3_model = Sam3Model.from_pretrained(
             self.vision_tower_name,
             device_map=device_map,
         )
+        self.vision_tower = sam3_model.vision_encoder
+        del sam3_model
 
         if self.freeze_vision_tower:
             self.vision_tower.requires_grad_(False)

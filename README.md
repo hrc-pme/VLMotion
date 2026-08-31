@@ -97,19 +97,6 @@ ros2 launch vlpoint controller.launch.py
 ros2 launch vlpoint worker.launch.py
 ```
 
-#### 3. Launch Complete System (Controller + Worker)
-```bash
-ros2 launch vlpoint vlpoint.launch.py
-```
-
-### Launch VLServo Package
-
-The VLServo package provides visual servoing functionality.
-
-```bash
-ros2 launch vlservo vlservoing.launch.py
-```
-
 ## Typical Workflow
 
 ### Full System Launch
@@ -130,14 +117,6 @@ source environment.sh
 cd ros2_ws
 source install/setup.bash
 ros2 launch vlpoint worker.launch.py
-```
-
-**Terminal 3 - Launch VLServo Visual Servoing:**
-```bash
-source environment.sh
-cd ros2_ws
-source install/setup.bash
-ros2 launch vlservo vlservoing.launch.py
 ```
 
 ### Launch in Docker Environment
@@ -204,6 +183,90 @@ source install/setup.bash
    # Make sure X11 forwarding is enabled
    xhost +local:docker
    ```
+
+## Training
+
+The initial training setup uses 100 images sampled evenly from 20 different scene groups. Each image retains all associated annotations, such as up and down, resulting in 200 training and validation records in total.
+
+### 1. Enter the Container
+
+Run on the host:
+
+```bash
+docker exec -it vlmotion bash
+```
+
+Inside the container, verify the GPU and training data:
+
+```bash
+cd /workspace
+python3 -c 'import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))'
+find training_vlmotion_100/images -type f | wc -l
+```
+
+The output should include `True`, the GPU name, and an image count of `100`.
+
+### 2. Start Training
+
+```bash
+cd /workspace
+mkdir -p logs checkpoints
+set -o pipefail
+bash scripts/train_vlmotion.sh 2>&1 | tee logs/vlmotion-train.log
+```
+
+On the first run, the base model, CLIP, and SAM3 are downloaded to `/workspace/.cache/huggingface`. The corresponding location on the host is `/home/alan/VLMotion/.cache/huggingface`.
+
+The training script directly uses the existing model code in `/workspace/ros2_ws/src/vlpoint`. `vlpoint` remains the existing ROS package name, while the public training scripts and outputs consistently use the `vlmotion` name.
+
+Default training configuration:
+
+- 100 images and 160 training records
+- 20 images from 4 complete scene groups for validation, totaling 40 validation records
+- 5 epochs
+- Batch size 1 with 16 gradient accumulation steps
+- Learning rate `5e-5`
+- Approximately 50 optimizer steps, with a checkpoint saved every 10 steps
+- BF16 and 4-bit QLoRA
+- Output directory: `/workspace/checkpoints/vlmotion`
+
+If the output directory already contains a `checkpoint-*` directory, running the same command again automatically resumes training.
+
+### 3. Monitor or Stop Training
+
+In another terminal, run:
+
+```bash
+docker exec -it vlmotion bash
+tail -f /workspace/logs/vlmotion-train.log
+```
+
+You can also run `nvidia-smi` on the host. To stop training, press `Ctrl-C` in the training terminal. Any checkpoints that have already been written are preserved.
+
+### 4. Merge the Model
+
+After `/workspace/checkpoints/vlmotion/done.md` appears, run:
+
+```bash
+cd /workspace
+bash scripts/merge_vlmotion.sh
+```
+
+The merged model is written to `/workspace/checkpoints/vlmotion-merged`. The merge loads the 13B model in FP16, so stop other GPU workloads first.
+
+### 5. Change Training Parameters
+
+Set parameters before the command. For example, to run a 10-step smoke test:
+
+```bash
+cd /workspace
+OUTPUT_DIR=/workspace/checkpoints/vlmotion-smoke \
+MAX_STEPS=10 \
+SAVE_STEPS=10 \
+bash scripts/train_vlmotion.sh
+```
+
+Do not reuse the smoke-test output directory for a full training run.
 
 ## Development
 
