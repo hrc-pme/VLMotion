@@ -14,7 +14,7 @@ VLMotion/
 │   └── stop.sh            # Stop Docker container
 ├── ros2_ws/               # ROS2 workspace
 │   └── src/
-│       ├── vlpoint/       # VLPoint package (controller and worker)
+│       └── vlpoint/       # VLPoint package (controller and worker)
 └── environment.sh         # Environment setup script
 ```
 
