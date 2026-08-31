@@ -15,7 +15,6 @@ VLMotion/
 ├── ros2_ws/               # ROS2 workspace
 │   └── src/
 │       ├── vlpoint/       # VLPoint package (controller and worker)
-│       └── vlservo/       # VLServo package (visual servoing)
 └── environment.sh         # Environment setup script
 ```
 
