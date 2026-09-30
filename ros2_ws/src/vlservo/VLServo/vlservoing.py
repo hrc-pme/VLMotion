@@ -345,21 +345,30 @@ class ChatWidget(QTextEdit):
         self.moveCursor(QTextCursor.End)
 
 
+def _client_host(host):
+    """Address other processes on this machine use to reach a bind-all server."""
+    if host in ("0.0.0.0", "::", ""):
+        return "127.0.0.1"
+    return host
+
+
 class ServerProcess:
     def __init__(self):
         self.controller_process = None
         self.model_worker_process = None
-        self.controller_url = "http://10.0.0.1:11000"
+        self.controller_url = "http://127.0.0.1:11000"
 
     def start_controller(self, host="0.0.0.0", port=11000):
         cmd = [sys.executable, "-m", "point.serve.controller", "--host", host, "--port", str(port)]
         logger.info(f"Starting controller: {' '.join(cmd)}")
         self.controller_process = subprocess.Popen(cmd)
-        self.controller_url = f"http://{('10.0.0.1' if host in ['0.0.0.0', '::'] else host)}:{port}"
+        self.controller_url = f"http://{_client_host(host)}:{port}"
 
-    def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
-                           port=22000, worker_url="http://10.0.0.1:22000",
+    def start_model_worker(self, host="0.0.0.0", controller_url="http://127.0.0.1:11000",
+                           port=22000, worker_url=None,
                            model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True):
+        if worker_url is None:
+            worker_url = f"http://{_client_host(host)}:{port}"
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
             "--host", host,
@@ -1960,11 +1969,25 @@ class RoboPointMainWindow(QMainWindow):
                                                    model_path=self.model_path,
                                                    load_4bit=self.load_4bit)
             self.start_services_btn.setEnabled(False); self.stop_services_btn.setEnabled(True)
-            QTimer.singleShot(10000, self.refresh_model_list)
+            self._start_model_refresh()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start services: {e}")
 
+    def _start_model_refresh(self):
+        """Keep asking the controller until the worker has registered."""
+        timer = getattr(self, "_model_refresh_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.timeout.connect(self.refresh_model_list)
+            self._model_refresh_timer = timer
+        if not timer.isActive():
+            timer.start(5000)
+        QTimer.singleShot(3000, self.refresh_model_list)
+
     def stop_services(self):
+        timer = getattr(self, "_model_refresh_timer", None)
+        if timer is not None:
+            timer.stop()
         self.server_process.stop_all()
         self.service_status.setText("Controller: Stopped | Model Worker: Stopped")
         self.start_services_btn.setEnabled(True)
@@ -2091,6 +2114,9 @@ class RoboPointMainWindow(QMainWindow):
                         self.service_status.setText(f"{ctrl_str} | Model Worker: {worker_status}")
                         if self.models:
                             logger.info(f"Loaded models: {self.models}")
+                            timer = getattr(self, "_model_refresh_timer", None)
+                            if timer is not None:
+                                timer.stop()
                     except Exception:
                         pass
         except Exception as e:
@@ -2377,15 +2403,16 @@ class RoboPointMainWindow(QMainWindow):
 
 def main():
     parser = argparse.ArgumentParser(description="RoboPoint Visual Servoing GUI")
-    parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000", help="Controller URL")
+    parser.add_argument("--controller-url", type=str, default="http://127.0.0.1:11000", help="Controller URL")
     parser.add_argument("--model-path", type=str, default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", help="Model path")
     parser.add_argument("--load-4bit", action="store_true", default=True, help="Load model in 4-bit mode")
+    parser.add_argument("--autostart", action="store_true", help="Start the controller and model worker with the window")
     parser.add_argument('-r', '--remote', action='store_true', help='Receive camera images from a remote robot (subscribe to robot IP).')
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
     app.setApplicationName("RoboPoint (Visual Servoing)")
-    window = RoboPointMainWindow(controller_url=args.controller_url, autostart=False,
+    window = RoboPointMainWindow(controller_url=args.controller_url, autostart=args.autostart,
                                  model_path=args.model_path, load_4bit=args.load_4bit,
                                  use_remote_stream=args.remote)
     window.show()

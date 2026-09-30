@@ -2,8 +2,8 @@
 """Gate host velocity onto the Stretch driver.
 
 Service `vlmotion` sets /vlmotion/enable_base_motion and this node copies
-/vlmotion/cmd_vel to /stretch/cmd_vel. Service `vl` leaves the flag false, so
-the base receives a zero Twist.
+/vlmotion/cmd_vel to /stretch/cmd_vel. While the flag is false, the base
+receives a zero Twist.
 """
 
 import rclpy

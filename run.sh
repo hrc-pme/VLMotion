@@ -27,21 +27,20 @@ profile:
   stretch3 — robot / CPU
 
 services by profile:
-  4060ti:   zenoh-router | dev | cb | vl | vlmotion | build | stop
+  4060ti:   zenoh-router | dev | cb | vlmotion | build | stop
   stretch3: dev | cb | bridge | build | stop
 
 ros_domain_id:
-  optional for zenoh-router/dev/vl/vlmotion/bridge; default 0 (0-232)
+  optional for zenoh-router/dev/vlmotion/bridge; default 0 (0-232)
 
 examples:
   $0                          # TUI: device → service
   $0 4060ti                   # TUI: services for 4060ti
   $0 4060ti zenoh-router 30   # sole Zenoh router with ROS_DOMAIN_ID=30
-  $0 4060ti vl 30             # GUI, base held (auto-starts zenoh-router)
-  $0 4060ti vlmotion 30       # GUI, base moves
+  $0 4060ti vlmotion 30       # GUI (base moves after Start LLM Navigation)
   $0 stretch3 bridge 30       # cmd_vel gate (needs hellorobot cams + host router)
   $0 stretch3 stop
-  VLMOTION_PROFILE=4060ti $0 vl 30
+  VLMOTION_PROFILE=4060ti $0 vlmotion 30
 EOF
   exit 1
 }
@@ -83,7 +82,7 @@ validate_profile() {
 # Space-separated list of services allowed for a profile.
 services_for_profile() {
   case "$1" in
-    4060ti)   echo "zenoh-router dev cb vl vlmotion build stop" ;;
+    4060ti)   echo "zenoh-router dev cb vlmotion build stop" ;;
     stretch3) echo "dev cb bridge build stop" ;;
     *) return 1 ;;
   esac
@@ -199,12 +198,11 @@ select_service_tui() {
         zenoh-router "| Zenoh router"
         dev "| Dev shell"
         cb "| Colcon build"
-        vl "| GUI, base held"
-        vlmotion "| GUI, base moves"
+        vlmotion "| GUI"
         build "| Rebuild image"
         stop "| Stop all"
       )
-      n_items=7
+      n_items=6
       ;;
     stretch3)
       menu_options=(
@@ -445,7 +443,7 @@ ensure_compose_file() {
 
 needs_ros_domain_id() {
   case "$1" in
-    zenoh-router|dev|vl|vlmotion|bridge) return 0 ;;
+    zenoh-router|dev|vlmotion|bridge) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -470,7 +468,7 @@ run_service() {
       export ROS_DOMAIN_ID=$ros_domain_id
       start_dev "$project_name" "$compose_file"
       ;;
-    vl|vlmotion)
+    vlmotion)
       validate_ros_domain_id "$ros_domain_id"
       export ROS_DOMAIN_ID=$ros_domain_id
       start_host_gui "$project_name" "$compose_file" "$service"
@@ -524,7 +522,7 @@ run_tui_for_profile() {
     # Interactive shells leave the manager; daemon / one-shots return to menu.
     case "$service" in
       dev) return "$RET_OK" ;;
-      zenoh-router|vl|vlmotion|bridge|cb|build|stop)
+      zenoh-router|vlmotion|bridge|cb|build|stop)
         read -r -p "Press Enter to continue..."
         ;;
       *)

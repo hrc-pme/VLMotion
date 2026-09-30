@@ -2,8 +2,8 @@
 """Turn a GUI target pixel into a base Twist.
 
 The robot bridge is the only writer of /stretch/cmd_vel. This node publishes
-/vlmotion/cmd_vel and /vlmotion/enable_base_motion. When base motion is off
-(service `vl`), the twist is zero.
+/vlmotion/cmd_vel and /vlmotion/enable_base_motion. When base motion is off,
+the twist is zero.
 """
 
 import rclpy
@@ -102,7 +102,7 @@ class HostSession(Node):
                 twist.linear.x = float(max(0.0, min(0.25, self.k_lin * (z_m - self.stop_dist_m))))
             status = f'approach z={z_m}'
         elif self.running and not self.enable_base:
-            status = 'vl: base held'
+            status = 'base held'
 
         self.cmd_pub.publish(twist)
         text = String()

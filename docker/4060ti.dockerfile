@@ -72,9 +72,16 @@ RUN pip install --no-cache-dir \
 # Ubuntu 22.04's packaging 21.3 does not accept. packaging>=25 removed
 # that argument. Torch and the requirements file upgrade setuptools, so
 # pin again after those installs.
+# urchin loads the Stretch URDF for the GUI fingertip solver.
+# accelerate 1.x calls model.to() on a single-GPU 4-bit load. transformers
+# 4.37.2 rejects that. 0.30.1 keeps the quantized weights on the hook path.
 RUN python3 -m pip install --no-cache-dir \
         "setuptools>=68,<80" \
-        "packaging>=24,<25"
+        "packaging>=24,<25" \
+        "accelerate==0.30.1" \
+        urchin \
+        fastapi \
+        uvicorn
 
 FROM toolchain AS dev
 

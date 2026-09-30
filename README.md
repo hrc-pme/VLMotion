@@ -2,7 +2,7 @@
 
 Vision-language control for a Hello Robot Stretch 3. The GPU host runs the GUI and RoboPoint model. The robot runs a velocity bridge. The two machines share topics through Zenoh (`rmw_zenoh_cpp`), with the same host address as StreamVLN (`192.168.0.246:7447`).
 
-`vl` and `vlmotion` both open the GUI. `vlmotion` lets the bridge forward base velocity to `/stretch/cmd_vel`. `vl` keeps that velocity at zero.
+`vlmotion` opens the GUI. The bridge forwards base velocity to `/stretch/cmd_vel` only after Start LLM Navigation, and only when a target point and depth are available.
 
 ## Layout
 
@@ -40,7 +40,7 @@ Select a machine, then a service. `./run.sh` opens the TUI. The third argument i
 
 | Machine | Services |
 |---|---|
-| `4060ti` | `zenoh-router`, `dev`, `cb`, `vl`, `vlmotion`, `build`, `stop` |
+| `4060ti` | `zenoh-router`, `dev`, `cb`, `vlmotion`, `build`, `stop` |
 | `stretch3` | `dev`, `cb`, `bridge`, `build`, `stop` |
 
 `cb` runs `colcon build --symlink-install` inside the image for that machine. On the 4060ti it starts the Zenoh router first, because that container is a Zenoh client.
@@ -59,8 +59,7 @@ On the 4060ti, allow Docker to open windows, then start the router and a GUI:
 ```bash
 xhost +local:docker
 ./run.sh 4060ti zenoh-router
-./run.sh 4060ti vl 30          # GUI, base held
-./run.sh 4060ti vlmotion 30    # GUI, base moves
+./run.sh 4060ti vlmotion 30    # GUI; base moves after Start LLM Navigation
 ```
 
 On the Stretch 3, after the driver and D435i are up:
@@ -72,7 +71,6 @@ On the Stretch 3, after the driver and D435i are up:
 Logs:
 
 ```bash
-docker logs -f vlmotion-4060ti-vl
 docker logs -f vlmotion-4060ti-vlmotion
 docker logs -f vlmotion-stretch3-bridge
 ```
@@ -92,7 +90,7 @@ Camera and odometry come from the hellorobot driver. The bridge does not republi
 | `/vlmotion/target_pixel` | Point | GUI → host |
 | `/vlmotion/enable_base_motion` | Bool | host → bridge |
 | `/vlmotion/cmd_vel` | Twist | host → bridge |
-| `/stretch/cmd_vel` | Twist | bridge → driver (`vl` sends zeros) |
+| `/stretch/cmd_vel` | Twist | bridge → driver (zeros until navigation is running) |
 | `/stretch3/odom` | Odometry | driver → bridge |
 
 The default model is `wentao-yuan/robopoint-v1-vicuna-v1.5-13b` (`MODEL_PATH` in `.env`).

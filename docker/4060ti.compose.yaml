@@ -3,7 +3,7 @@
 #
 # Zenoh topology matches StreamVLN:
 #   zenoh-router  — sole rmw_zenohd (listen 0.0.0.0:7447)
-#   dev/cb/vl/vlmotion — clients → 127.0.0.1:7447
+#   dev/cb/vlmotion — clients → 127.0.0.1:7447
 #   stretch3      — clients → ZENOH_ROUTER_HOST:7447
 ################################################################################
 
@@ -98,30 +98,7 @@ services:
       - zenoh-router
     command: ["bash", "docker/scripts/colcon_build.sh"]
 
-  # GUI + model. Bridge drops /stretch/cmd_vel (base stays put).
-  vl:
-    <<: *common
-    container_name: vlmotion-4060ti-vl
-    depends_on:
-      - zenoh-router
-    environment:
-      <<: *zenoh_client_env
-      PYTHONPATH: /workspace/ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlpoint
-      HF_HOME: /workspace/.cache/huggingface
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
-      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,graphics}
-      DISPLAY: ${DISPLAY:-:0}
-      QT_X11_NO_MITSHM: "1"
-      QT_QPA_PLATFORM: xcb
-      NO_AT_BRIDGE: "1"
-      MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
-      CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
-      DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
-      ENABLE_BASE_MOTION: "0"
-      VLMOTION_ROS_CAMERA: "1"
-    command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]
-
-  # Same GUI. Bridge forwards /vlmotion/cmd_vel onto /stretch/cmd_vel.
+  # GUI + model. Base stays still until Start LLM Navigation.
   vlmotion:
     <<: *common
     container_name: vlmotion-4060ti-vlmotion

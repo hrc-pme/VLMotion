@@ -1,8 +1,8 @@
 #!/bin/bash
-# Host GUI + session node.
+# Host GUI + session node for service `vlmotion`.
 #
-# ENABLE_BASE_MOTION=0  → service `vl`       (GUI on, bridge zeros cmd_vel)
-# ENABLE_BASE_MOTION=1  → service `vlmotion` (GUI on, bridge forwards cmd_vel)
+# ENABLE_BASE_MOTION=1 lets the bridge forward /vlmotion/cmd_vel. The host
+# still publishes zeros until Start LLM Navigation has a target and depth.
 #
 # Topics (Zenoh, same roles as StreamVLN, VLMotion names):
 #   /camera/camera/color/image_raw/compressed          cams → GUI

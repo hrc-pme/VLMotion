@@ -5,6 +5,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -19,7 +20,9 @@ def generate_launch_description():
         name='vlmotion_host_session',
         output='screen',
         parameters=[{
-            'enable_base_motion': enable,
+            # "0"/"1" must stay strings. Bare numbers become integers in the
+            # params file, which rejects the node's string declaration.
+            'enable_base_motion': ParameterValue(enable, value_type=str),
             'camera_image_topic': camera_image_topic,
             'depth_image_topic': depth_image_topic,
         }],
@@ -30,6 +33,7 @@ def generate_launch_description():
             'python3', '-m', 'VLServo.vlservoing',
             '--model-path', model_path,
             '--controller-url', 'http://127.0.0.1:11000',
+            '--autostart',
         ],
         output='screen',
     )

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stretch3 bridge. Forwards /vlmotion/cmd_vel to /stretch/cmd_vel only while
-# /vlmotion/enable_base_motion is true (service vlmotion). Service vl keeps
-# the base still.
+# /vlmotion/enable_base_motion is true. The host sets that flag from
+# service `vlmotion`.
 #
 # Camera is not republished here. hellorobot cams publish the D435i topics
 # and the host GUI subscribes over Zenoh.
@@ -10,7 +10,6 @@
 #   hellorobot driver + d435i, both on the same Zenoh router / ROS_DOMAIN_ID
 # Host:
 #   ./run.sh 4060ti zenoh-router
-#   ./run.sh 4060ti vl 30
 #   ./run.sh 4060ti vlmotion 30
 
 set -euo pipefail
