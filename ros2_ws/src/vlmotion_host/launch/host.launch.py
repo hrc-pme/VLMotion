@@ -11,8 +11,6 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     enable = LaunchConfiguration('enable_base_motion')
     model_path = LaunchConfiguration('model_path')
-    camera_image_topic = LaunchConfiguration('camera_image_topic')
-    depth_image_topic = LaunchConfiguration('depth_image_topic')
 
     session = Node(
         package='vlmotion_host',
@@ -23,8 +21,6 @@ def generate_launch_description():
             # "0"/"1" must stay strings. Bare numbers become integers in the
             # params file, which rejects the node's string declaration.
             'enable_base_motion': ParameterValue(enable, value_type=str),
-            'camera_image_topic': camera_image_topic,
-            'depth_image_topic': depth_image_topic,
         }],
     )
 
@@ -43,14 +39,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'model_path',
             default_value='wentao-yuan/robopoint-v1-vicuna-v1.5-13b',
-        ),
-        DeclareLaunchArgument(
-            'camera_image_topic',
-            default_value='/camera/camera/color/image_raw/compressed',
-        ),
-        DeclareLaunchArgument(
-            'depth_image_topic',
-            default_value='/camera/camera/aligned_depth_to_color/image_raw',
         ),
         session,
         gui,

@@ -734,7 +734,7 @@ class DirectCameraThread(QThread):
             import zmq
             from VLServo import yolo_networking as yn
             # Lazy import pyrealsense helpers based on selection
-            if self.camera == 'D405':
+            if self.camera in ('D405', 'top camera'):
                 from VLServo import d405_helpers as dh
                 pipeline, profile = dh.start_d405(self.exposure)
                 port = yn.d405_port
@@ -886,7 +886,7 @@ class RoboPointMainWindow(QMainWindow):
         self._ros_pixel_timer = None
         self._ros_camera_started = False
         # Track current camera selection for display transforms
-        self.current_camera = 'D405'
+        self.current_camera = 'top camera'
 
         # ArUco perception
         try:
@@ -986,7 +986,7 @@ class RoboPointMainWindow(QMainWindow):
         sender_group = QGroupBox("Camera")
         sender_layout = QVBoxLayout(sender_group)
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Camera:"))
-        self.camera_selector = QComboBox(); self.camera_selector.addItems(["D405", "D435i"]) ; row1.addWidget(self.camera_selector)
+        self.camera_selector = QComboBox(); self.camera_selector.addItems(["top camera", "head camera"]) ; row1.addWidget(self.camera_selector)
         sender_layout.addLayout(row1)
         row2 = QHBoxLayout(); row2.addWidget(QLabel("Exposure:"))
         self.exposure_selector = QComboBox(); self.exposure_selector.addItems(["low", "medium", "auto"]) ; row2.addWidget(self.exposure_selector)
@@ -1120,7 +1120,7 @@ class RoboPointMainWindow(QMainWindow):
             return
         if self.camera_thread is not None:
             return
-        port = yn.d405_port if self.camera_selector.currentText() == 'D405' else yn.d435i_port
+        port = yn.d435i_port if self.camera_selector.currentText() == 'head camera' else yn.d405_port
         self.camera_thread = CameraReceiverThread(port=port, use_remote=True)
         self.camera_thread.frame_received.connect(self.on_camera_frame)
         self.camera_thread.status_changed.connect(self.on_camera_status)
@@ -1141,6 +1141,11 @@ class RoboPointMainWindow(QMainWindow):
             self.current_camera = self.camera_selector.currentText()
         except Exception:
             pass
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            link = self._ensure_ros_link()
+            link.start()
+            link.select(self.current_camera)
+            return
         if self.use_remote_stream:
             self.restart_camera_receiver()
 
@@ -1184,12 +1189,12 @@ class RoboPointMainWindow(QMainWindow):
         - Allow pressing Start multiple times to re-home the arm.
         """
         try:
-            # Force D405 stream for LLM grasping so white_point receives frames
+            # Grasping uses the head camera (D435i); it is the one with aligned depth.
             try:
-                if getattr(self, 'current_camera', 'D405') != 'D405':
-                    self.current_camera = 'D405'
+                if getattr(self, 'current_camera', 'top camera') != 'head camera':
+                    self.current_camera = 'head camera'
                     try:
-                        self.camera_selector.setCurrentText('D405')
+                        self.camera_selector.setCurrentText('head camera')
                     except Exception:
                         pass
                     # Restart local direct capture or remote subscriber on D405
@@ -1204,7 +1209,7 @@ class RoboPointMainWindow(QMainWindow):
                                 pass
                             self.direct_camera_thread = None
                         try:
-                            self.direct_camera_thread = DirectCameraThread(camera='D405', exposure=self.exposure_selector.currentText())
+                            self.direct_camera_thread = DirectCameraThread(camera='head camera', exposure=self.exposure_selector.currentText())
                             self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
                             self.direct_camera_thread.status_changed.connect(self.on_camera_status)
                             self.direct_camera_thread.start()
@@ -1384,7 +1389,7 @@ class RoboPointMainWindow(QMainWindow):
                                     if depth_m is not None and depth_m > 0:
                                         x_cm, y_cm, z_cm = (np.array(center_xyz, dtype=np.float32) * 100.0).tolist()
                                         line = f"{x_cm:.1f}, {y_cm:.1f}, {z_cm:.1f} cm"
-                                        if getattr(self, 'current_camera', 'D405') == 'D435i':
+                                        if getattr(self, 'current_camera', 'top camera') == 'head camera':
                                             # Draw after rotation: map (px,py) -> (xr,yr)
                                             xr, yr = (h0 - 1 - py), px
                                             post_rotate_annotations.append(('dot', xr, yr, line))
@@ -1467,7 +1472,7 @@ class RoboPointMainWindow(QMainWindow):
                                 if vals_m.size > 0:
                                     depth_m = float(np.median(vals_m))
                         # Draw overlay
-                        if getattr(self, 'current_camera', 'D405') == 'D435i':
+                        if getattr(self, 'current_camera', 'top camera') == 'head camera':
                             # Map to rotated display coords after rotation
                             xr, yr = (h0 - 1 - py), px
                             post_rotate_annotations.append(('dot', int(xr), int(yr), None))
@@ -1495,7 +1500,7 @@ class RoboPointMainWindow(QMainWindow):
                     pass
             # Rotate for D435i and draw any queued annotations in rotated frame with upright text
             try:
-                if getattr(self, 'current_camera', 'D405') == 'D435i':
+                if getattr(self, 'current_camera', 'top camera') == 'head camera':
                     import cv2
                     vis = cv2.rotate(vis, cv2.ROTATE_90_CLOCKWISE)
                     for kind, xr, yr, line in post_rotate_annotations:
@@ -1805,7 +1810,7 @@ class RoboPointMainWindow(QMainWindow):
             # For D435i, we display a 90-degree clockwise rotated image.
             # Map clicks on the rotated display back to the sensor coordinates.
             px, py = x, y
-            if getattr(self, 'current_camera', 'D405') == 'D435i' and \
+            if getattr(self, 'current_camera', 'top camera') == 'head camera' and \
                hasattr(self, 'last_color_frame_bgr') and self.last_color_frame_bgr is not None:
                 h, w = self.last_color_frame_bgr.shape[:2]
                 # Display rotation used: x_display = h-1 - y_orig, y_display = x_orig
@@ -1906,11 +1911,11 @@ class RoboPointMainWindow(QMainWindow):
         link.status_changed.connect(self.on_camera_status)
         link.start()
         self._ros_camera_started = True
-        self.current_camera = 'D435i'
         try:
-            self.camera_selector.setCurrentText('D435i')
+            self.current_camera = self.camera_selector.currentText() or 'top camera'
         except Exception:
-            pass
+            self.current_camera = 'top camera'
+        link.select(self.current_camera)
         self.btn_start_sender.setEnabled(False)
         self.btn_stop_sender.setEnabled(True)
 
@@ -2012,10 +2017,10 @@ class RoboPointMainWindow(QMainWindow):
                 self.nav_start_btn.setEnabled(True)
                 self.nav_stop_btn.setEnabled(True)
                 return
-            # Prefer D435i for navigation
+            # Navigation uses the head camera so depth is available.
             try:
-                self.camera_selector.setCurrentText('D435i')
-                self.current_camera = 'D435i'
+                self.camera_selector.setCurrentText('head camera')
+                self.current_camera = 'head camera'
             except Exception:
                 pass
             # Go to a fixed start pose (head/gripper forward), using current tilt setting
@@ -2146,7 +2151,7 @@ class RoboPointMainWindow(QMainWindow):
                     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                     # For D435i, match the GUI by rotating 90 degrees clockwise
                     try:
-                        if getattr(self, 'current_camera', 'D405') == 'D435i':
+                        if getattr(self, 'current_camera', 'top camera') == 'head camera':
                             rgb = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)
                     except Exception:
                         pass

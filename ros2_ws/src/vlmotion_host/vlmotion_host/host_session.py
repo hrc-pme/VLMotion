@@ -8,17 +8,32 @@ the twist is zero.
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point, Twist
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
+
+# Same aliases as VLServo.ros_link.CAMERAS.
+DEPTH_TOPICS = {
+    'top camera': '/camera_top/camera_top/aligned_depth_to_color/image_raw',
+    'head camera': '/head_camera/head_camera/aligned_depth_to_color/image_raw',
+}
+
+
+def _sensor_qos():
+    return QoSProfile(
+        reliability=ReliabilityPolicy.BEST_EFFORT,
+        durability=DurabilityPolicy.VOLATILE,
+        history=HistoryPolicy.KEEP_LAST,
+        depth=5,
+    )
 
 
 class HostSession(Node):
     def __init__(self):
         super().__init__('vlmotion_host_session')
         self.declare_parameter('enable_base_motion', '0')
-        self.declare_parameter('camera_image_topic', '/camera/camera/color/image_raw/compressed')
-        self.declare_parameter('depth_image_topic', '/camera/camera/aligned_depth_to_color/image_raw')
+        self.declare_parameter('depth_image_topic', DEPTH_TOPICS['top camera'])
         self.declare_parameter('stop_dist_m', 0.8)
         self.declare_parameter('k_lin', 0.4)
         self.declare_parameter('k_ang', 0.8)
@@ -35,20 +50,40 @@ class HostSession(Node):
         self.depth = None
         self.depth_w = 0
         self.depth_h = 0
+        self._depth_sub = None
+        self._camera = 'top camera'
 
-        depth_topic = self.get_parameter('depth_image_topic').value
         self.create_subscription(Bool, '/vlmotion/run', self._on_run, 10)
         self.create_subscription(Point, '/vlmotion/target_pixel', self._on_pixel, 10)
         self.create_subscription(String, '/vlmotion/user_input', self._on_text, 10)
-        self.create_subscription(Image, depth_topic, self._on_depth, 10)
+        self.create_subscription(String, '/vlmotion/camera_select', self._on_camera, 10)
+        self._subscribe_depth(self.get_parameter('depth_image_topic').value)
 
         self.enable_pub = self.create_publisher(Bool, '/vlmotion/enable_base_motion', 10)
         self.cmd_pub = self.create_publisher(Twist, '/vlmotion/cmd_vel', 10)
         self.status_pub = self.create_publisher(String, '/vlmotion/status', 10)
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
-            f'enable_base_motion={self.enable_base} depth={depth_topic}'
+            f'enable_base_motion={self.enable_base} camera={self._camera}'
         )
+
+    def _subscribe_depth(self, topic: str):
+        if self._depth_sub is not None:
+            self.destroy_subscription(self._depth_sub)
+            self._depth_sub = None
+        self.depth = None
+        self.depth_w = 0
+        self.depth_h = 0
+        self._depth_sub = self.create_subscription(Image, topic, self._on_depth, _sensor_qos())
+        self.get_logger().info(f'depth topic {topic}')
+
+    def _on_camera(self, msg: String):
+        name = msg.data.strip()
+        topic = DEPTH_TOPICS.get(name)
+        if topic is None or name == self._camera:
+            return
+        self._camera = name
+        self._subscribe_depth(topic)
 
     def _on_run(self, msg: Bool):
         self.running = bool(msg.data)

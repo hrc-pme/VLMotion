@@ -83,8 +83,11 @@ Camera and odometry come from the hellorobot driver. The bridge does not republi
 
 | Topic | Type | Path |
 |---|---|---|
-| `/camera/camera/color/image_raw/compressed` | CompressedImage | camera → GUI |
-| `/camera/camera/aligned_depth_to_color/image_raw` | Image | camera → host |
+| `/camera_top/camera_top/color/image_raw/compressed` | CompressedImage | D415 top camera → GUI |
+| `/camera_top/camera_top/aligned_depth_to_color/image_raw` | Image | D415 depth, only if that stream is enabled |
+| `/head_camera/head_camera/color/image_raw/compressed` | CompressedImage | D435i head camera → GUI |
+| `/head_camera/head_camera/aligned_depth_to_color/image_raw` | Image | D435i depth → host |
+| `/vlmotion/camera_select` | String | GUI → host (`top camera` or `head camera`) |
 | `/vlmotion/user_input` | String | GUI → host |
 | `/vlmotion/run` | Bool | GUI → host |
 | `/vlmotion/target_pixel` | Point | GUI → host |

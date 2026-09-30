@@ -4,9 +4,10 @@
 # ENABLE_BASE_MOTION=1 lets the bridge forward /vlmotion/cmd_vel. The host
 # still publishes zeros until Start LLM Navigation has a target and depth.
 #
-# Topics (Zenoh, same roles as StreamVLN, VLMotion names):
-#   /camera/camera/color/image_raw/compressed          cams → GUI
-#   /camera/camera/aligned_depth_to_color/image_raw    cams → host_session
+# Camera aliases (GUI selector; hellorobot keeps these topic names):
+#   top camera  = D415  /camera_top/camera_top/...
+#   head camera = D435i /head_camera/head_camera/...
+#   /vlmotion/camera_select         String   GUI → host_session
 #   /vlmotion/user_input            String   GUI → host
 #   /vlmotion/run                   Bool     GUI → host
 #   /vlmotion/target_pixel          Point    GUI → host_session
@@ -47,6 +48,4 @@ fi
 
 exec ros2 launch vlmotion_host host.launch.py \
   "enable_base_motion:=${ENABLE_BASE_MOTION}" \
-  "model_path:=${MODEL_PATH}" \
-  "camera_image_topic:=${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}" \
-  "depth_image_topic:=${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}"
+  "model_path:=${MODEL_PATH}"

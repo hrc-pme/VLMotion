@@ -15,5 +15,14 @@ if [ ! -d "$WS_DIR/src" ]; then
   exit 1
 fi
 
+# setuptools>=80 dropped `develop --uninstall`, which colcon symlink-install
+# still calls. setuptools>=68 needs packaging.canonicalize_version's
+# strip_trailing_zero argument, which Ubuntu 22.04's packaging 21.3 lacks
+# and packaging>=25 removed. Pin both here so an already-built image works
+# without a rebuild.
+python3 -m pip install --no-cache-dir --disable-pip-version-check \
+  "setuptools>=68,<80" \
+  "packaging>=24,<25"
+
 cd "$WS_DIR"
 colcon build --symlink-install "$@"

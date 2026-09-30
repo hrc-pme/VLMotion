@@ -40,9 +40,6 @@ x-common-settings: &common
     QT_QPA_PLATFORM: xcb
     NO_AT_BRIDGE: "1"
     MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
-    CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
-    DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
-
   deploy:
     resources:
       reservations:
@@ -115,8 +112,6 @@ services:
       QT_QPA_PLATFORM: xcb
       NO_AT_BRIDGE: "1"
       MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
-      CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
-      DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
       ENABLE_BASE_MOTION: "1"
       VLMOTION_ROS_CAMERA: "1"
     command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]
