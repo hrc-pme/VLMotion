@@ -818,6 +818,11 @@ class RoboPointMainWindow(QMainWindow):
                  load_4bit=True, use_remote_stream=False):
         super().__init__()
         self.setWindowTitle("RoboPoint - Visual Servoing")
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            if os.environ.get('ENABLE_BASE_MOTION') == '1':
+                self.setWindowTitle("VLMotion — base moves")
+            else:
+                self.setWindowTitle("VL — base held")
         self.setGeometry(100, 100, 1200, 800)
 
         self.server_process = ServerProcess()
@@ -868,6 +873,9 @@ class RoboPointMainWindow(QMainWindow):
         self.white_point_proc = WhitePointGraspProcess()
         # External process for LLM Navigation
         self.base_nav_proc = BaseNavigationProcess()
+        self.ros_link = None
+        self._ros_pixel_timer = None
+        self._ros_camera_started = False
         # Track current camera selection for display transforms
         self.current_camera = 'D405'
 
@@ -901,6 +909,8 @@ class RoboPointMainWindow(QMainWindow):
             self.start_services()
         else:
             QTimer.singleShot(1000, self.refresh_model_list)
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            QTimer.singleShot(500, self._start_ros_camera)
 
         # Start YOLO subscriber (optional publisher)
         self.start_yolo_subscriber()
@@ -1873,7 +1883,42 @@ class RoboPointMainWindow(QMainWindow):
         except Exception as e:
             logger.warning(f"Head tilt set failed: {e}")
 
+    def _ensure_ros_link(self):
+        if self.ros_link is None:
+            from .ros_link import RosLink
+            self.ros_link = RosLink()
+        return self.ros_link
+
+    def _start_ros_camera(self):
+        if self._ros_camera_started:
+            return
+        link = self._ensure_ros_link()
+        link.frame_received.connect(self.on_camera_frame)
+        link.status_changed.connect(self.on_camera_status)
+        link.start()
+        self._ros_camera_started = True
+        self.current_camera = 'D435i'
+        try:
+            self.camera_selector.setCurrentText('D435i')
+        except Exception:
+            pass
+        self.btn_start_sender.setEnabled(False)
+        self.btn_stop_sender.setEnabled(True)
+
+    def _publish_ros_target(self):
+        if not self.nav_session_active or self.ros_link is None:
+            return
+        if self.llm_tracked_px is not None and self.llm_tracked_py is not None:
+            self.ros_link.publish_pixel(int(self.llm_tracked_px), int(self.llm_tracked_py))
+        elif self.latest_llm_points:
+            xs = [p[0] for p in self.latest_llm_points]
+            ys = [p[1] for p in self.latest_llm_points]
+            self.ros_link.publish_pixel(int(np.mean(xs)), int(np.mean(ys)))
+
     def start_camera(self):
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            self._start_ros_camera()
+            return
         # Stop remote subscriber if running locally
         if not self.use_remote_stream and self.camera_thread is not None:
             try:
@@ -1929,6 +1974,21 @@ class RoboPointMainWindow(QMainWindow):
     def start_llm_navigation(self):
         try:
             self.nav_session_active = True
+            if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+                link = self._ensure_ros_link()
+                link.start()
+                link.publish_run(True)
+                if self._ros_pixel_timer is None:
+                    self._ros_pixel_timer = QTimer(self)
+                    self._ros_pixel_timer.timeout.connect(self._publish_ros_target)
+                self._ros_pixel_timer.start(200)
+                moving = os.environ.get('ENABLE_BASE_MOTION') == '1'
+                self.nav_status.setText(
+                    'LLM Navigation: publishing target' + (' (base moves)' if moving else ' (base held)')
+                )
+                self.nav_start_btn.setEnabled(True)
+                self.nav_stop_btn.setEnabled(True)
+                return
             # Prefer D435i for navigation
             try:
                 self.camera_selector.setCurrentText('D435i')
@@ -1971,6 +2031,10 @@ class RoboPointMainWindow(QMainWindow):
 
     def stop_llm_navigation(self):
         try:
+            if self._ros_pixel_timer is not None:
+                self._ros_pixel_timer.stop()
+            if self.ros_link is not None:
+                self.ros_link.publish_run(False)
             self.base_nav_proc.stop()
         finally:
             self.nav_session_active = False
@@ -2041,6 +2105,10 @@ class RoboPointMainWindow(QMainWindow):
     def send_message(self):
         """Send message to model (mirrors D405 GUI behavior)."""
         text = self.text_input.text().strip()
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1' and text:
+            link = self._ensure_ros_link()
+            link.start()
+            link.publish_user_input(text)
         image = getattr(self.image_label, 'original_image', None)
         # If no manually loaded image, fall back to latest camera frame
         # so the LLM receives an image and can return annotated results.
@@ -2288,6 +2356,8 @@ class RoboPointMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
+            if self.ros_link is not None:
+                self.ros_link.stop()
             if self.camera_thread is not None:
                 self.camera_thread.stop(); self.camera_thread.wait(1000)
             if self.direct_camera_thread is not None:

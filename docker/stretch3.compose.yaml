@@ -1,0 +1,52 @@
+################################################################################
+# VLMotion - robot (stretch3)
+#
+# Zenoh client → host router at ZENOH_ROUTER_HOST:ZENOH_ROUTER_PORT
+# Camera and odom come from the hellorobot driver, same as StreamVLN.
+# This container only runs the cmd_vel bridge.
+################################################################################
+
+x-common-settings: &common
+  build:
+    context: ..
+    dockerfile: docker/stretch3.dockerfile
+  image: vlmotion:stretch3-dev
+
+  volumes:
+    - "/etc/localtime:/etc/localtime:ro"
+    - "..:/workspace"
+
+  env_file:
+    - path: ../.env
+      required: false
+
+  environment:
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+    RMW_IMPLEMENTATION: rmw_zenoh_cpp
+    ZENOH_ROUTER_HOST: ${ZENOH_ROUTER_HOST:-192.168.0.246}
+    ZENOH_ROUTER_PORT: ${ZENOH_ROUTER_PORT:-7447}
+    ODOM_TOPIC: ${ODOM_TOPIC:-/stretch3/odom}
+    CMD_VEL_TOPIC: ${CMD_VEL_TOPIC:-/stretch/cmd_vel}
+
+  network_mode: "host"
+  entrypoint: ["bash", "/workspace/docker/scripts/zenoh/entrypoint-stretch3.sh"]
+  stdin_open: true
+  tty: true
+  stop_grace_period: 1s
+  working_dir: /workspace
+
+services:
+  dev:
+    <<: *common
+    container_name: vlmotion-stretch3-dev
+    command: ["/bin/bash"]
+
+  cb:
+    <<: *common
+    container_name: vlmotion-stretch3-cb
+    command: ["bash", "docker/scripts/colcon_build.sh"]
+
+  bridge:
+    <<: *common
+    container_name: vlmotion-stretch3-bridge
+    command: ["bash", "/workspace/docker/scripts/run_robot_bridge.sh"]

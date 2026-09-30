@@ -1,0 +1,145 @@
+################################################################################
+# VLMotion - GPU host (4060 Ti / CUDA 12.1)
+#
+# Zenoh topology matches StreamVLN:
+#   zenoh-router  — sole rmw_zenohd (listen 0.0.0.0:7447)
+#   dev/cb/vl/vlmotion — clients → 127.0.0.1:7447
+#   stretch3      — clients → ZENOH_ROUTER_HOST:7447
+################################################################################
+
+x-zenoh-client-env: &zenoh_client_env
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+  RMW_IMPLEMENTATION: rmw_zenoh_cpp
+  ZENOH_ROUTER_HOST: ${ZENOH_ROUTER_HOST:-192.168.0.246}
+  ZENOH_ROUTER_PORT: ${ZENOH_ROUTER_PORT:-7447}
+  ZENOH_HOST_CLIENT_ENDPOINT: ${ZENOH_HOST_CLIENT_ENDPOINT:-127.0.0.1:7447}
+
+x-common-settings: &common
+  build:
+    context: ..
+    dockerfile: docker/4060ti.dockerfile
+  image: vlmotion:4060ti-dev
+
+  volumes:
+    - "/etc/localtime:/etc/localtime:ro"
+    - "..:/workspace"
+    - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
+
+  env_file:
+    - path: ../.env
+      required: false
+
+  environment:
+    <<: *zenoh_client_env
+    PYTHONPATH: /workspace/ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlpoint
+    HF_HOME: /workspace/.cache/huggingface
+    NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+    NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,graphics}
+    DISPLAY: ${DISPLAY:-:0}
+    QT_X11_NO_MITSHM: "1"
+    QT_QPA_PLATFORM: xcb
+    NO_AT_BRIDGE: "1"
+    MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
+    CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
+    DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
+
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+  network_mode: "host"
+  entrypoint: ["bash", "/workspace/docker/scripts/zenoh/entrypoint-4060ti.sh"]
+  stdin_open: true
+  tty: true
+  stop_grace_period: 1s
+  working_dir: /workspace
+
+services:
+  zenoh-router:
+    build:
+      context: ..
+      dockerfile: docker/4060ti.dockerfile
+    image: vlmotion:4060ti-dev
+    container_name: vlmotion-4060ti-zenoh-router
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "..:/workspace"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: rmw_zenoh_cpp
+      ZENOH_ROUTER_HOST: ${ZENOH_ROUTER_HOST:-192.168.0.246}
+      ZENOH_ROUTER_PORT: ${ZENOH_ROUTER_PORT:-7447}
+    network_mode: "host"
+    entrypoint: ["bash", "/workspace/docker/scripts/zenoh/run-router.sh"]
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    stop_grace_period: 2s
+    working_dir: /workspace
+
+  dev:
+    <<: *common
+    container_name: vlmotion-4060ti-dev
+    depends_on:
+      - zenoh-router
+    command: ["/bin/bash"]
+
+  cb:
+    <<: *common
+    container_name: vlmotion-4060ti-cb
+    depends_on:
+      - zenoh-router
+    command: ["bash", "docker/scripts/colcon_build.sh"]
+
+  # GUI + model. Bridge drops /stretch/cmd_vel (base stays put).
+  vl:
+    <<: *common
+    container_name: vlmotion-4060ti-vl
+    depends_on:
+      - zenoh-router
+    environment:
+      <<: *zenoh_client_env
+      PYTHONPATH: /workspace/ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlpoint
+      HF_HOME: /workspace/.cache/huggingface
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,graphics}
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      QT_QPA_PLATFORM: xcb
+      NO_AT_BRIDGE: "1"
+      MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
+      CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
+      DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
+      ENABLE_BASE_MOTION: "0"
+      VLMOTION_ROS_CAMERA: "1"
+    command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]
+
+  # Same GUI. Bridge forwards /vlmotion/cmd_vel onto /stretch/cmd_vel.
+  vlmotion:
+    <<: *common
+    container_name: vlmotion-4060ti-vlmotion
+    depends_on:
+      - zenoh-router
+    environment:
+      <<: *zenoh_client_env
+      PYTHONPATH: /workspace/ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlpoint
+      HF_HOME: /workspace/.cache/huggingface
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,graphics}
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      QT_QPA_PLATFORM: xcb
+      NO_AT_BRIDGE: "1"
+      MODEL_PATH: ${MODEL_PATH:-wentao-yuan/robopoint-v1-vicuna-v1.5-13b}
+      CAMERA_IMAGE_TOPIC: ${CAMERA_IMAGE_TOPIC:-/camera/camera/color/image_raw/compressed}
+      DEPTH_IMAGE_TOPIC: ${DEPTH_IMAGE_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
+      ENABLE_BASE_MOTION: "1"
+      VLMOTION_ROS_CAMERA: "1"
+    command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]
