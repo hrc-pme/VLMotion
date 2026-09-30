@@ -43,6 +43,7 @@ class ArucoMarker:
         self.y_axis = None
         self.z_axis = None
         self.min_dist_between_corners = None
+        self.corners = None
         
     
     def update(self, corners, frame_number, rgb_camera_info):
@@ -100,13 +101,21 @@ class ArucoMarker:
         return self.info.copy()
 
     def get_marker_poly(self):
-        poly_points = np.array(corners)
+        if self.corners is None:
+            return None
+        poly_points = np.array(self.corners, dtype=np.float32)
         poly_points = np.round(poly_points).astype(np.int32)
         return poly_points
 
     def draw_marker_poly(self, image): 
         poly_points = self.get_marker_poly()
-        cv2.fillConvexPoly(image, poly_points, (255, 0, 0))
+        if poly_points is not None:
+            cv2.fillConvexPoly(image, poly_points, (255, 0, 0))
+
+    def get_corners_image(self):
+        if self.corners is None:
+            return None
+        return np.array(self.corners, dtype=np.float32)
         
      
 class ArucoMarkerCollection:
@@ -219,10 +228,19 @@ class ArucoDetector():
             pos, x_axis, y_axis, z_axis = m.get_position_and_axes()
             min_dist_between_corners = m.get_min_dist_between_corners()
             info = m.get_info()
+            corners_2d = m.get_corners_image()
+            center_uv = None
+            if corners_2d is not None:
+                try:
+                    center_uv = np.mean(corners_2d, axis=0)
+                except Exception:
+                    center_uv = None
             out[aruco_id] = {'pos': pos,
                              'x_axis': x_axis, 'y_axis': y_axis, 'z_axis': z_axis,
                              'min_dist_between_corners': min_dist_between_corners,
-                             'info': info}
+                             'info': info,
+                             'corners_2d': corners_2d,
+                             'center_uv': center_uv}
         return out
     
     def get_detected_markers(self):

@@ -11,6 +11,9 @@ d435i_port = 4435
 # hello YOLO => 4ello Y010 => 4010
 yolo_port = 4010
 
+# Command/control port for LLM grasp target updates (GUI -> controller)
+llm_cmd_port = 4446
+
 # Specify the models to run. Larger models run more slowly. You should
 # target a rate of 10 Hz or higher. Examples of rates can be found in
 # the comments below.

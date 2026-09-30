@@ -21,6 +21,16 @@
   use_rgb_only: True
   name: 'toy'
   link: 'None'
+'133':  # 手腕頂部
+  length_mm: 23.5
+  use_rgb_only: False
+  name: 'wrist_top'
+  link: 'link_aruco_top_wrist'
+'135':  # D405 相機背面
+  length_mm: 31.4
+  use_rgb_only: False
+  name: 'd405_back'
+  link: 'link_aruco_d405'
 'default':
   length_mm: 24
   use_rgb_only: False
