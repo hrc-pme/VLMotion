@@ -77,25 +77,6 @@ docker logs -f vlmotion-stretch3-bridge
 
 Stop a machine's containers with `./run.sh 4060ti stop` or `./run.sh stretch3 stop`.
 
-## Topics
-
-Camera and odometry come from the hellorobot driver. The bridge does not republish images.
-
-| Topic | Type | Path |
-|---|---|---|
-| `/camera_top/camera_top/color/image_raw/compressed` | CompressedImage | D415 top camera → GUI |
-| `/camera_top/camera_top/aligned_depth_to_color/image_raw` | Image | D415 depth, only if that stream is enabled |
-| `/head_camera/head_camera/color/image_raw/compressed` | CompressedImage | D435i head camera → GUI |
-| `/head_camera/head_camera/aligned_depth_to_color/image_raw` | Image | D435i depth → host |
-| `/vlmotion/camera_select` | String | GUI → host (`top camera` or `head camera`) |
-| `/vlmotion/user_input` | String | GUI → host |
-| `/vlmotion/run` | Bool | GUI → host |
-| `/vlmotion/target_pixel` | Point | GUI → host |
-| `/vlmotion/enable_base_motion` | Bool | host → bridge |
-| `/vlmotion/cmd_vel` | Twist | host → bridge |
-| `/stretch/cmd_vel` | Twist | bridge → driver (zeros until navigation is running) |
-| `/stretch3/odom` | Odometry | driver → bridge |
-
 The default model is `wentao-yuan/robopoint-v1-vicuna-v1.5-13b` (`MODEL_PATH` in `.env`).
 
 ## License
