@@ -1,218 +1,101 @@
 # VLMotion
 
-VLMotion is a ROS2-based vision-language robot control system that integrates two main packages: VLPoint and VLServo.
+Vision-language control for a Hello Robot Stretch 3. The GPU host runs the GUI and RoboPoint model. The robot runs a velocity bridge. The two machines share topics through Zenoh (`rmw_zenoh_cpp`), with the same host address as StreamVLN (`192.168.0.246:7447`).
 
-## Project Structure
+`vl` and `vlmotion` both open the GUI. `vlmotion` lets the bridge forward base velocity to `/stretch/cmd_vel`. `vl` keeps that velocity at zero.
+
+## Layout
 
 ```
 VLMotion/
-├── docker/                 # Docker container configuration
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   ├── build.sh           # Build Docker image
-│   ├── run.sh             # Start Docker container
-│   └── stop.sh            # Stop Docker container
-├── ros2_ws/               # ROS2 workspace
-│   └── src/
-│       ├── vlpoint/       # VLPoint package (controller and worker)
-│       └── vlservo/       # VLServo package (visual servoing)
-└── environment.sh         # Environment setup script
+├── run.sh                         # TUI / CLI (device, then service)
+├── .env.template
+├── docker/
+│   ├── 4060ti.dockerfile          # CUDA 12.1 host image
+│   ├── 4060ti.compose.yaml
+│   ├── stretch3.dockerfile        # robot image
+│   ├── stretch3.compose.yaml
+│   └── scripts/                   # Zenoh entrypoints, colcon build, GUI, bridge
+└── ros2_ws/src/
+    ├── vlpoint/                   # RoboPoint controller and worker
+    ├── vlservo/                   # Qt GUI and visual servoing
+    ├── vlmotion_host/             # pixel → /vlmotion/cmd_vel
+    └── vlmotion_robot_bridge/     # gate onto /stretch/cmd_vel
 ```
 
-## System Requirements
+## Requirements
 
 - Ubuntu 22.04
-- ROS2 Humble
-- Docker (optional)
-- Python 3.10+
-
-## Installation and Setup
-
-### Method 1: Using Docker (Recommended)
-
-1. **Build Docker Image**
-   ```bash
-   cd docker
-   ./build.sh
-   ```
-
-2. **Start Docker Container**
-   ```bash
-   ./run.sh
-   ```
-
-3. **Inside the Container, Setup Environment**
-   ```bash
-   source /workspace/environment.sh [ROS_DOMAIN_ID]
-   ```
-   - `ROS_DOMAIN_ID` is optional, defaults to 0, valid range: 0-232
-
-4. **Build ROS2 Packages**
-   ```bash
-   cd /workspace/ros2_ws
-   colcon build --symlink-install
-   source install/setup.bash
-   ```
-
-### Method 2: Local Installation
-
-1. **Install ROS2 Humble**
-   ```bash
-   # See official documentation: https://docs.ros.org/en/humble/Installation.html
-   ```
-
-2. **Setup Environment**
-   ```bash
-   source environment.sh [ROS_DOMAIN_ID]
-   ```
-
-3. **Build ROS2 Packages**
-   ```bash
-   cd ros2_ws
-   colcon build --symlink-install
-   source install/setup.bash
-   ```
-
-## Usage
-
-### Launch VLPoint Package
-
-The VLPoint package contains two main components: controller and worker.
-
-#### 1. Launch Controller
-```bash
-ros2 launch vlpoint controller.launch.py
-```
-
-#### 2. Launch Worker
-```bash
-ros2 launch vlpoint worker.launch.py
-```
-
-#### 3. Launch Complete System (Controller + Worker)
-```bash
-ros2 launch vlpoint vlpoint.launch.py
-```
-
-### Launch VLServo Package
-
-The VLServo package provides visual servoing functionality.
+- Docker, with the NVIDIA runtime on the 4060ti host
+- `dialog` or `whiptail` for the TUI
+- On the robot, the hellorobot driver and D435i already publishing on the same Zenoh domain
 
 ```bash
-ros2 launch vlservo vlservoing.launch.py
+cp .env.template .env
 ```
 
-## Typical Workflow
+## Services
 
-### Full System Launch
+Select a machine, then a service. `./run.sh` opens the TUI. The third argument is `ROS_DOMAIN_ID` (0–232, default 0).
 
-Execute the following commands in **separate terminal windows**:
+| Machine | Services |
+|---|---|
+| `4060ti` | `zenoh-router`, `dev`, `cb`, `vl`, `vlmotion`, `build`, `stop` |
+| `stretch3` | `dev`, `cb`, `bridge`, `build`, `stop` |
 
-**Terminal 1 - Launch VLPoint Controller:**
-```bash
-source environment.sh
-cd ros2_ws
-source install/setup.bash
-ros2 launch vlpoint controller.launch.py
-```
-
-**Terminal 2 - Launch VLPoint Worker:**
-```bash
-source environment.sh
-cd ros2_ws
-source install/setup.bash
-ros2 launch vlpoint worker.launch.py
-```
-
-**Terminal 3 - Launch VLServo Visual Servoing:**
-```bash
-source environment.sh
-cd ros2_ws
-source install/setup.bash
-ros2 launch vlservo vlservoing.launch.py
-```
-
-### Launch in Docker Environment
-
-If using Docker, you can open multiple terminals inside the container:
+`cb` runs `colcon build --symlink-install` inside the image for that machine. On the 4060ti it starts the Zenoh router first, because that container is a Zenoh client.
 
 ```bash
-# On host machine
-docker exec -it vlmotion_container bash
-
-# Inside container
-source /workspace/environment.sh
-cd /workspace/ros2_ws
-source install/setup.bash
-# Then execute the corresponding launch commands
+./run.sh 4060ti build          # build the GPU image once
+./run.sh 4060ti cb             # colcon build on the host
+./run.sh stretch3 build        # build the robot image once
+./run.sh stretch3 cb           # colcon build on the robot
 ```
 
-## Package Description
+## Run
 
-### VLPoint
-- **controller.launch.py**: Launches the main controller node for system coordination
-- **worker.launch.py**: Launches the worker node for vision-language tasks
-- **vlpoint.launch.py**: Launches both controller and worker simultaneously
-
-### VLServo
-- **vlservoing.launch.py**: Launches the visual servoing system for robot vision-based navigation and control
-
-## Environment Variables
-
-- `ROS_DOMAIN_ID`: ROS2 domain ID (0-232), used for multi-robot or multi-system isolation
-- `ROS_DISTRO`: ROS2 distribution version (default: humble)
-- `PYTHONWARNINGS`: Python warning filter settings
-- `PIP_DISABLE_PIP_VERSION_CHECK`: Disable pip version check
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Package Not Found**
-   ```bash
-   # Make sure packages are built and environment is sourced
-   cd ros2_ws
-   colcon build --symlink-install
-   source install/setup.bash
-   ```
-
-2. **Permission Issues**
-   ```bash
-   # Check file permissions
-   sudo chmod +x docker/*.sh
-   ```
-
-3. **ROS2 Communication Issues**
-   ```bash
-   # Check if ROS_DOMAIN_ID is consistent
-   echo $ROS_DOMAIN_ID
-   
-   # Reset environment
-   source environment.sh [DOMAIN_ID]
-   ```
-
-4. **GUI Issues in Docker Container**
-   ```bash
-   # Make sure X11 forwarding is enabled
-   xhost +local:docker
-   ```
-
-## Development
-
-### Rebuild Packages
+On the 4060ti, allow Docker to open windows, then start the router and a GUI:
 
 ```bash
-cd ros2_ws
-colcon build --symlink-install --packages-select vlpoint vlservo
-source install/setup.bash
+xhost +local:docker
+./run.sh 4060ti zenoh-router
+./run.sh 4060ti vl 30          # GUI, base held
+./run.sh 4060ti vlmotion 30    # GUI, base moves
 ```
 
-### Clean Build Artifacts
+On the Stretch 3, after the driver and D435i are up:
 
 ```bash
-cd ros2_ws
-rm -rf build/ install/ log/
+./run.sh stretch3 bridge 30
 ```
+
+Logs:
+
+```bash
+docker logs -f vlmotion-4060ti-vl
+docker logs -f vlmotion-4060ti-vlmotion
+docker logs -f vlmotion-stretch3-bridge
+```
+
+Stop a machine's containers with `./run.sh 4060ti stop` or `./run.sh stretch3 stop`.
+
+## Topics
+
+Camera and odometry come from the hellorobot driver. The bridge does not republish images.
+
+| Topic | Type | Path |
+|---|---|---|
+| `/camera/camera/color/image_raw/compressed` | CompressedImage | camera → GUI |
+| `/camera/camera/aligned_depth_to_color/image_raw` | Image | camera → host |
+| `/vlmotion/user_input` | String | GUI → host |
+| `/vlmotion/run` | Bool | GUI → host |
+| `/vlmotion/target_pixel` | Point | GUI → host |
+| `/vlmotion/enable_base_motion` | Bool | host → bridge |
+| `/vlmotion/cmd_vel` | Twist | host → bridge |
+| `/stretch/cmd_vel` | Twist | bridge → driver (`vl` sends zeros) |
+| `/stretch3/odom` | Odometry | driver → bridge |
+
+The default model is `wentao-yuan/robopoint-v1-vicuna-v1.5-13b` (`MODEL_PATH` in `.env`).
 
 ## License
 
