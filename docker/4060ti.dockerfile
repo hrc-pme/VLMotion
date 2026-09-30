@@ -67,6 +67,15 @@ RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cu121 \
     && pip install --no-cache-dir -r requirements.docker.txt
 
+# colcon-core 0.21 requires setuptools<80. setuptools>=68 calls
+# packaging.canonicalize_version(..., strip_trailing_zero=False), which
+# Ubuntu 22.04's packaging 21.3 does not accept. packaging>=25 removed
+# that argument. Torch and the requirements file upgrade setuptools, so
+# pin again after those installs.
+RUN python3 -m pip install --no-cache-dir \
+        "setuptools>=68,<80" \
+        "packaging>=24,<25"
+
 FROM toolchain AS dev
 
 ENV PYTHONPATH=/workspace/ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlpoint

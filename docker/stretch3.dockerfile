@@ -48,7 +48,14 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
 
 FROM ros AS toolchain
 
-RUN python3 -m pip install --no-cache-dir --upgrade pip "setuptools<82" wheel \
+# colcon-core 0.21 requires setuptools<80. setuptools>=68 calls
+# packaging.canonicalize_version(..., strip_trailing_zero=False), which
+# Ubuntu 22.04's packaging 21.3 does not accept. packaging>=25 removed
+# that argument.
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
+        "setuptools>=68,<80" \
+        "packaging>=24,<25" \
+        wheel \
     && pip install --no-cache-dir numpy
 
 FROM toolchain AS dev
