@@ -128,6 +128,7 @@ class RosLink(QObject):
         self._align_phase = 'idle'
         self._align_future = None
         self._align_log_t = 0.0
+        self._align_role = None
         self._gripper_cam_aligned = False
         self._color_decode_warned = False
 
@@ -290,13 +291,26 @@ class RosLink(QObject):
     def is_gripper_cam_aligned(self) -> bool:
         return bool(self._gripper_cam_aligned)
 
+    def _begin_cam_alignment(self, role: str):
+        if role == 'gripper' and self._camera != GRIPPER_CAMERA:
+            return
+        if role == 'head' and self._camera != HEAD_CAMERA:
+            return
+        self._align_role = role
+        self._align_wanted = True
+        self._align_phase = 'idle'
+        self._align_future = None
+        self._align_start_t = 0.0
+        if role == 'gripper':
+            self._gripper_cam_aligned = False
+
     def request_gripper_cam_alignment(self):
         """Drive wrist joints so gripper cam view matches arm extend direction."""
-        if self._camera != GRIPPER_CAMERA:
-            return
-        self._align_wanted = True
-        self._gripper_cam_aligned = False
-        self._align_start_t = 0.0
+        self._begin_cam_alignment('gripper')
+
+    def request_head_cam_alignment(self):
+        """Drive head pan/tilt so head cam view matches arm extend direction."""
+        self._begin_cam_alignment('head')
 
     def _qpos_hold(self):
         joints = self._joints
@@ -402,8 +416,9 @@ class RosLink(QObject):
         return qpos
 
     def _align_tick(self):
-        from .stretch3_tf_grasp import optical_z_alignment_with_arm
+        from .stretch3_tf_grasp import head_pan_tilt_step, optical_z_alignment_with_arm
 
+        role = self._align_role or 'gripper'
         phase = self._align_phase
         future = self._align_future
         if phase == 'idle':
@@ -432,7 +447,10 @@ class RosLink(QObject):
             qpos = self._qpos_hold()
             if qpos is None:
                 return
-            qpos = self._alignment_qpos(qpos)
+            if role == 'head':
+                qpos = head_pan_tilt_step(qpos, self._tf)
+            else:
+                qpos = self._alignment_qpos(qpos)
             from std_msgs.msg import Float64MultiArray
 
             msg = Float64MultiArray()
@@ -443,18 +461,22 @@ class RosLink(QObject):
                 self._align_start_t = now
             aligned = False
             if self._tf is not None:
-                dot = optical_z_alignment_with_arm(self._tf)
+                dot = optical_z_alignment_with_arm(self._tf, role)
                 aligned = dot is not None and dot >= 0.92
-            if not aligned and (now - self._align_start_t) >= 8.0:
+            timeout_sec = 12.0 if role == 'head' else 8.0
+            if not aligned and (now - self._align_start_t) >= timeout_sec:
                 aligned = True
                 self.node.get_logger().warn(
-                    'align gripper cam: TF alignment timeout; accepting nominal wrist pose'
+                    f'align {role} cam: TF alignment timeout; stopping alignment loop'
                 )
             if aligned:
                 self._align_wanted = False
                 self._align_phase = 'idle'
-                self._gripper_cam_aligned = True
-                self.status_changed.emit('Gripper cam aligned with arm axis')
+                if role == 'gripper':
+                    self._gripper_cam_aligned = True
+                    self.status_changed.emit('Gripper cam aligned with arm axis')
+                else:
+                    self.status_changed.emit('Head cam aligned with arm axis')
                 pending = self._call_trigger(self._deact_client)
                 if pending is not None:
                     self._align_future = pending
@@ -462,7 +484,7 @@ class RosLink(QObject):
                 return
             if now - self._align_log_t > 2.0:
                 self._align_log_t = now
-                self.node.get_logger().info('align gripper cam: holding wrist pose')
+                self.node.get_logger().info(f'align {role} cam: adjusting pose')
             return
         if phase == 'to_deact':
             if future is None or not future.done():

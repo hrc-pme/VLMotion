@@ -1164,15 +1164,24 @@ class RoboPointMainWindow(QMainWindow):
         except Exception:
             pass
         if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
-            from .ros_link import GRIPPER_CAMERA
+            from .ros_link import GRIPPER_CAMERA, HEAD_CAMERA
 
             self._start_ros_camera()
             link = self.ros_link
-            if self.current_camera == GRIPPER_CAMERA and link is not None:
-                link.request_gripper_cam_alignment()
-                self.llm_status.setText("LLM Grasping: aligning gripper cam to arm axis…")
+            if link is not None:
+                if self.current_camera == GRIPPER_CAMERA:
+                    link.request_gripper_cam_alignment()
+                    self.llm_status.setText("LLM Grasping: aligning gripper cam to arm axis…")
+                elif self.current_camera == HEAD_CAMERA:
+                    link.request_head_cam_alignment()
             self._update_llm_grasp_controls()
             return
+        if self.current_camera == 'head camera':
+            try:
+                from VLServo.pose_utils import set_head_pan_tilt_deg
+                set_head_pan_tilt_deg(0.0, 0.0)
+            except Exception as e:
+                logger.warning(f"Head cam alignment failed: {e}")
         if self.current_camera == 'gripper camera':
             try:
                 from VLServo.pose_utils import set_gripper_cam_grasp_wrist_pose
@@ -2005,7 +2014,8 @@ class RoboPointMainWindow(QMainWindow):
         return self.ros_link
 
     def _on_ros_link_status(self, text: str):
-        if 'gripper cam aligned' in text.lower() and not self.llm_session_active:
+        lower = text.lower()
+        if not self.llm_session_active and 'gripper cam aligned' in lower:
             self.llm_status.setText('LLM Grasping: gripper cam ready — press Start')
             self._update_llm_grasp_controls()
 

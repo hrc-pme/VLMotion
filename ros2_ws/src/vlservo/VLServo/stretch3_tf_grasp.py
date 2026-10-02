@@ -1,8 +1,7 @@
-"""TF helpers for gripper-camera LLM grasping on Stretch3.
+"""TF helpers for Stretch3 camera / arm geometry (gripper + head cameras).
 
-Uses /stretch3/tf (and /stretch3/tf_static) plus gripper camera intrinsics to
-map a white-dot pixel + depth into arm extension and lift adjustments in
-base_link.
+Uses /stretch3/tf (and /stretch3/tf_static) plus camera intrinsics to map
+pixels to arm/lift motion and to align camera optical axes with arm extension.
 """
 
 from __future__ import annotations
@@ -26,12 +25,26 @@ BASE_FRAME = os.environ.get('VLMOTION_BASE_FRAME', 'stretch3/base_link')
 ARM_FRAME = os.environ.get('VLMOTION_ARM_FRAME', 'stretch3/link_arm_l0')
 # joint_lift prismatic axis (same URDF; not base_link +Z).
 LIFT_FRAME = os.environ.get('VLMOTION_LIFT_FRAME', 'stretch3/link_lift')
-# custom_test uses stretch3/camera_top_color_optical_frame; gripper URDF link is
-# gripper_camera_color_optical_frame. Try prefixed name first, then RealSense node name.
-_OPTICAL_FRAME_CANDIDATES = (
+# RealSense nodes use {camera_name}_color_optical_frame; robot_state_publisher
+# prefixes URDF links with stretch3/ (see custom_test reloc.yaml for top cam).
+_GRIPPER_OPTICAL_CANDIDATES = (
     'stretch3/gripper_camera_color_optical_frame',
     'gripper_camera_color_optical_frame',
 )
+_HEAD_OPTICAL_CANDIDATES = (
+    'stretch3/head_camera_color_optical_frame',
+    'head_camera_color_optical_frame',
+)
+
+_OPTICAL_ROLE = {
+    'gripper': (_GRIPPER_OPTICAL_CANDIDATES, 'VLMOTION_GRIPPER_OPTICAL_FRAME'),
+    'head': (_HEAD_OPTICAL_CANDIDATES, 'VLMOTION_HEAD_OPTICAL_FRAME'),
+}
+
+# joint_head_pan / joint_head_tilt limits (stretch-se3-3092/exported_urdf/stretch.urdf).
+HEAD_PAN_LIMITS = (-3.9, 1.5)
+HEAD_TILT_LIMITS = (-1.53, 0.79)
+HEAD_ALIGN_GAIN = float(os.environ.get('VLMOTION_HEAD_ALIGN_GAIN', '0.35'))
 
 TF_TOPIC = os.environ.get('VLMOTION_TF_TOPIC', '/stretch3/tf')
 TF_STATIC_TOPIC = os.environ.get('VLMOTION_TF_STATIC_TOPIC', '/stretch3/tf_static')
@@ -81,7 +94,7 @@ class Stretch3TfBuffer:
         )
         node.create_subscription(TFMessage, TF_TOPIC, self._on_tf, volatile)
         node.create_subscription(TFMessage, TF_STATIC_TOPIC, self._on_tf_static, static_qos)
-        self._optical_frame = None
+        self._optical_by_role = {}
 
     def _on_tf(self, msg):
         for transform in msg.transforms:
@@ -106,17 +119,72 @@ class Stretch3TfBuffer:
         except TransformException:
             return None
 
-    def optical_frame(self) -> Optional[str]:
-        override = os.environ.get('VLMOTION_GRIPPER_OPTICAL_FRAME')
+    def optical_frame(self, role: str = 'gripper') -> Optional[str]:
+        spec = _OPTICAL_ROLE.get(role)
+        if spec is None:
+            return None
+        candidates, env_key = spec
+        override = os.environ.get(env_key)
         if override:
             return override
-        if self._optical_frame is not None:
-            return self._optical_frame
-        for frame in _OPTICAL_FRAME_CANDIDATES:
+        cached = self._optical_by_role.get(role)
+        if cached is not None:
+            return cached
+        for frame in candidates:
             if self.lookup(BASE_FRAME, frame) is not None:
-                self._optical_frame = frame
+                self._optical_by_role[role] = frame
                 return frame
         return None
+
+
+def _optical_z_in_base(tf_buffer: Stretch3TfBuffer, role: str) -> Optional[np.ndarray]:
+    optical = tf_buffer.optical_frame(role)
+    if optical is None:
+        return None
+    trans = tf_buffer.lookup(BASE_FRAME, optical)
+    if trans is None:
+        return None
+    rot = _quat_to_rot_matrix(
+        trans.transform.rotation.x,
+        trans.transform.rotation.y,
+        trans.transform.rotation.z,
+        trans.transform.rotation.w,
+    )
+    z = rot[:, 2]
+    norm = float(np.linalg.norm(z))
+    if norm < 1e-9:
+        return None
+    return z / norm
+
+
+def _wrap_pi(angle: float) -> float:
+    return float((angle + math.pi) % (2.0 * math.pi) - math.pi)
+
+
+def head_pan_tilt_step(qpos: list, tf_buffer: Stretch3TfBuffer) -> list:
+    """Increment head pan/tilt so head cam optical +Z tracks arm extension."""
+    optical_z = _optical_z_in_base(tf_buffer, 'head')
+    arm_axis = arm_extension_unit(tf_buffer)
+    if optical_z is None or arm_axis is None:
+        return qpos
+    pan_err = _wrap_pi(
+        math.atan2(float(arm_axis[1]), float(arm_axis[0]))
+        - math.atan2(float(optical_z[1]), float(optical_z[0])),
+    )
+    arm_elev = math.atan2(float(arm_axis[2]), math.hypot(float(arm_axis[0]), float(arm_axis[1])))
+    opt_elev = math.atan2(float(optical_z[2]), math.hypot(float(optical_z[0]), float(optical_z[1])))
+    tilt_err = arm_elev - opt_elev
+    qpos[5] = float(np.clip(
+        qpos[5] + HEAD_ALIGN_GAIN * pan_err,
+        HEAD_PAN_LIMITS[0],
+        HEAD_PAN_LIMITS[1],
+    ))
+    qpos[6] = float(np.clip(
+        qpos[6] + HEAD_ALIGN_GAIN * tilt_err,
+        HEAD_TILT_LIMITS[0],
+        HEAD_TILT_LIMITS[1],
+    ))
+    return qpos
 
 
 def _link_prismatic_axis_in_base(tf_buffer: Stretch3TfBuffer, link_frame: str) -> Optional[np.ndarray]:
@@ -157,7 +225,7 @@ def white_dot_in_base(
     if camera_info is None or depth_m is None or depth_m <= 0.0:
         return None
     p_optical = pixel_to_3d(np.array([float(px), float(py)], dtype=np.float32), float(depth_m), camera_info)
-    optical = tf_buffer.optical_frame()
+    optical = tf_buffer.optical_frame('gripper')
     if optical is None:
         return None
     trans = tf_buffer.lookup(BASE_FRAME, optical)
@@ -167,7 +235,7 @@ def white_dot_in_base(
 
 
 def camera_origin_in_base(tf_buffer: Stretch3TfBuffer) -> Optional[np.ndarray]:
-    optical = tf_buffer.optical_frame()
+    optical = tf_buffer.optical_frame('gripper')
     if optical is None:
         return None
     trans = tf_buffer.lookup(BASE_FRAME, optical)
@@ -198,21 +266,11 @@ def arm_lift_errors_m(
     return arm_err, lift_err
 
 
-def optical_z_alignment_with_arm(tf_buffer: Stretch3TfBuffer) -> Optional[float]:
+def optical_z_alignment_with_arm(tf_buffer: Stretch3TfBuffer, role: str = 'gripper') -> Optional[float]:
     """Dot product between camera optical +Z and arm extension axis (1.0 = aligned)."""
-    optical = tf_buffer.optical_frame()
-    if optical is None:
-        return None
-    trans = tf_buffer.lookup(BASE_FRAME, optical)
+    optical_z = _optical_z_in_base(tf_buffer, role)
     arm_axis = arm_extension_unit(tf_buffer)
-    if trans is None or arm_axis is None:
+    if optical_z is None or arm_axis is None:
         return None
-    rot = _quat_to_rot_matrix(
-        trans.transform.rotation.x,
-        trans.transform.rotation.y,
-        trans.transform.rotation.z,
-        trans.transform.rotation.w,
-    )
-    optical_z = rot[:, 2]
     return float(np.dot(optical_z, arm_axis))
 

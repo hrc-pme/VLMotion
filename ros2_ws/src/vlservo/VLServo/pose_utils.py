@@ -27,6 +27,22 @@ def _with_robot():
     return robot
 
 
+def set_head_pan_tilt_deg(pan_deg: float, tilt_deg: float) -> None:
+    """Set head pan and tilt in degrees (one-shot via stretch_body)."""
+    robot = _with_robot()
+    try:
+        if hasattr(robot, 'head'):
+            robot.head.move_to('head_pan', float(pan_deg) * math.pi / 180.0)
+            robot.head.move_to('head_tilt', float(tilt_deg) * math.pi / 180.0)
+        robot.push_command()
+        robot.wait_command()
+    finally:
+        try:
+            robot.stop()
+        except Exception:
+            pass
+
+
 def set_head_tilt_deg(deg: float) -> None:
     """Set head tilt (pitch) angle in degrees immediately; 0 deg looks forward.
 
