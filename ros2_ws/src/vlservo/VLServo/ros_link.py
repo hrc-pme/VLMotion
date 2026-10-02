@@ -4,9 +4,11 @@ The GUI picks a camera by alias. Those aliases match hellorobot_stretch3:
 
 - ``head camera`` is the D435i at ``/head_camera/head_camera/...``
 - ``top camera`` is the current D415 at ``/camera_top/camera_top/...``
-- ``gripper camera`` is the D405 at ``/gripper_camera/gripper_camera/...``
+- ``gripper camera`` is the D405 at ``/gripper_camera/gripper_camera/...`` (color:
+  ``color/image_rect_raw/compressed``)
 """
 
+import os
 import threading
 
 import numpy as np
@@ -26,10 +28,20 @@ CAMERAS = {
         'depth': '/head_camera/head_camera/aligned_depth_to_color/image_raw/compressedDepth',
     },
     GRIPPER_CAMERA: {
-        'color': '/gripper_camera/gripper_camera/color/image_raw/compressed',
+        # Stretch3 D405 publishes rectified color on image_rect_raw, not image_raw.
+        'color': '/gripper_camera/gripper_camera/color/image_rect_raw/compressed',
         'depth': '/gripper_camera/gripper_camera/aligned_depth_to_color/image_raw/compressedDepth',
     },
 }
+
+
+def _resolve_camera_topics(name: str) -> dict:
+    """Return compressed color/depth topics, with optional env overrides per alias."""
+    spec = dict(CAMERAS.get(name, CAMERAS[TOP_CAMERA]))
+    key = name.upper().replace(' ', '_')
+    spec['color'] = os.environ.get(f'VLMOTION_{key}_COLOR_TOPIC', spec['color'])
+    spec['depth'] = os.environ.get(f'VLMOTION_{key}_DEPTH_TOPIC', spec['depth'])
+    return spec
 
 
 def decode_compressed_depth(data):
@@ -117,6 +129,7 @@ class RosLink(QObject):
         self._align_future = None
         self._align_log_t = 0.0
         self._gripper_cam_aligned = False
+        self._color_decode_warned = False
 
     def start(self):
         if not self.enabled or self.node is not None:
@@ -149,6 +162,15 @@ class RosLink(QObject):
         self._thread.start()
         self.select(self._camera)
 
+    def _drop_camera_subscriptions(self):
+        if self.node is None:
+            return
+        for attr in ('_image_sub', '_depth_sub', '_camera_info_sub'):
+            sub = getattr(self, attr, None)
+            if sub is not None:
+                self.node.destroy_subscription(sub)
+                setattr(self, attr, None)
+
     def select(self, name: str):
         if name not in CAMERAS:
             name = TOP_CAMERA
@@ -158,49 +180,57 @@ class RosLink(QObject):
         from sensor_msgs.msg import CompressedImage
         from std_msgs.msg import String
 
-        if self._image_sub is not None:
-            self.node.destroy_subscription(self._image_sub)
-            self._image_sub = None
-        if self._depth_sub is not None:
-            self.node.destroy_subscription(self._depth_sub)
-            self._depth_sub = None
+        self._drop_camera_subscriptions()
         with self._depth_lock:
             self._depth = None
         self._camera_info = None
-        if self._camera_info_sub is not None:
-            self.node.destroy_subscription(self._camera_info_sub)
-            self._camera_info_sub = None
-        topic = CAMERAS[name]['color']
+        self._color_decode_warned = False
+
+        topics = _resolve_camera_topics(name)
+        color_topic = topics['color']
         self._image_sub = self.node.create_subscription(
-            CompressedImage, topic, self._on_image, _sensor_qos(),
+            CompressedImage, color_topic, self._on_image, _sensor_qos(),
         )
         self._depth_sub = self.node.create_subscription(
-            CompressedImage, CAMERAS[name]['depth'], self._on_depth, _sensor_qos(),
+            CompressedImage, topics['depth'], self._on_depth, _sensor_qos(),
         )
         if name == GRIPPER_CAMERA:
             from sensor_msgs.msg import CameraInfo
 
-            info_topic = '/gripper_camera/gripper_camera/color/camera_info'
+            info_topic = os.environ.get(
+                'VLMOTION_GRIPPER_CAMERA_INFO_TOPIC',
+                '/gripper_camera/gripper_camera/color/camera_info',
+            )
             self._camera_info_sub = self.node.create_subscription(
                 CameraInfo, info_topic, self._on_camera_info, _sensor_qos(),
             )
         msg = String()
         msg.data = name
         self.camera_pub.publish(msg)
-        self.status_changed.emit(f'ROS camera {name}: {topic}')
+        self.status_changed.emit(f'ROS camera {name}')
 
     def _loop(self):
         import rclpy
         while self._spinning and rclpy.ok() and self.node is not None:
             rclpy.spin_once(self.node, timeout_sec=0.1)
 
+    def _emit_color_frame(self, bgr):
+        if bgr is None:
+            return
+        self.frame_received.emit({'color_image': bgr})
+
     def _on_image(self, msg):
         import cv2
         buf = np.frombuffer(msg.data, dtype=np.uint8)
         bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if bgr is None:
+            if self.node is not None and not self._color_decode_warned:
+                self._color_decode_warned = True
+                self.node.get_logger().warning(
+                    f'failed to decode compressed color on {self._camera}'
+                )
             return
-        self.frame_received.emit({'color_image': bgr})
+        self._emit_color_frame(bgr)
 
     def _on_depth(self, msg):
         img = decode_compressed_depth(msg.data)
