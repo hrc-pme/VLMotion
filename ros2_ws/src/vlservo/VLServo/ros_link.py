@@ -4,6 +4,7 @@ The GUI picks a camera by alias. Those aliases match hellorobot_stretch3:
 
 - ``head camera`` is the D435i at ``/head_camera/head_camera/...``
 - ``top camera`` is the current D415 at ``/camera_top/camera_top/...``
+- ``gripper camera`` is the D405 at ``/gripper_camera/gripper_camera/...``
 """
 
 import threading
@@ -13,6 +14,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 
 HEAD_CAMERA = 'head camera'
 TOP_CAMERA = 'top camera'
+GRIPPER_CAMERA = 'gripper camera'
 
 CAMERAS = {
     TOP_CAMERA: {
@@ -22,6 +24,10 @@ CAMERAS = {
     HEAD_CAMERA: {
         'color': '/head_camera/head_camera/color/image_raw/compressed',
         'depth': '/head_camera/head_camera/aligned_depth_to_color/image_raw/compressedDepth',
+    },
+    GRIPPER_CAMERA: {
+        'color': '/gripper_camera/gripper_camera/color/image_raw/compressed',
+        'depth': '/gripper_camera/gripper_camera/aligned_depth_to_color/image_raw/compressedDepth',
     },
 }
 

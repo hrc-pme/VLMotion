@@ -65,6 +65,7 @@ def _robust_depth(samples):
 DEPTH_TOPICS = {
     'top camera': '/camera_top/camera_top/aligned_depth_to_color/image_raw/compressedDepth',
     'head camera': '/head_camera/head_camera/aligned_depth_to_color/image_raw/compressedDepth',
+    'gripper camera': '/gripper_camera/gripper_camera/aligned_depth_to_color/image_raw/compressedDepth',
 }
 
 
