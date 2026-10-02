@@ -138,6 +138,8 @@ class HostSession(Node):
             status = f'approach z={z_m}'
         elif self.running and not self.enable_base:
             status = 'base held'
+        elif self.running and self.px is not None and self.enable_base:
+            status = f'waiting for depth ({self._camera})'
 
         self.cmd_pub.publish(twist)
         text = String()

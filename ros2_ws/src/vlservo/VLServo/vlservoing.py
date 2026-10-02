@@ -2005,6 +2005,14 @@ class RoboPointMainWindow(QMainWindow):
             if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
                 link = self._ensure_ros_link()
                 link.start()
+                # Top camera is color-only. Aligned depth is on the head camera,
+                # and host_session will not command the base without it.
+                try:
+                    self.camera_selector.setCurrentText('head camera')
+                except Exception:
+                    pass
+                self.current_camera = 'head camera'
+                link.select('head camera')
                 link.publish_run(True)
                 if self._ros_pixel_timer is None:
                     self._ros_pixel_timer = QTimer(self)
@@ -2012,7 +2020,8 @@ class RoboPointMainWindow(QMainWindow):
                 self._ros_pixel_timer.start(200)
                 moving = os.environ.get('ENABLE_BASE_MOTION') == '1'
                 self.nav_status.setText(
-                    'LLM Navigation: publishing target' + (' (base moves)' if moving else ' (base held)')
+                    'LLM Navigation: head camera, publishing target'
+                    + (' (base moves)' if moving else ' (base held)')
                 )
                 self.nav_start_btn.setEnabled(True)
                 self.nav_stop_btn.setEnabled(True)
