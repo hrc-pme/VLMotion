@@ -869,6 +869,7 @@ class RoboPointMainWindow(QMainWindow):
         # UI frame update limiter to reduce heavy redraw stutter
         self.ui_fps_limit = 15.0
         self._last_ui_frame_ts = 0.0
+        self._fps_smooth = None
         self._frame_idx = 0
         self._aruco_every_n = 3  # do ArUco update every N frames to reduce UI stalls
 
@@ -940,20 +941,27 @@ class RoboPointMainWindow(QMainWindow):
         left_layout.addWidget(model_group)
 
         # Camera stream group
-        stream_group = QGroupBox("Camera Stream")
-        stream_layout = QVBoxLayout(stream_group)
+        self.stream_group = QGroupBox("Camera Stream")
+        stream_layout = QVBoxLayout(self.stream_group)
         self.image_label = ImageLabel()
         stream_layout.addWidget(self.image_label)
         # Lightweight overlay toggle to draw white point without extra processing
         try:
             self.overlay_white_dot_cb = QCheckBox("Overlay white dot")
             self.overlay_white_dot_cb.setChecked(True)
-            stream_layout.addWidget(self.overlay_white_dot_cb)
+            self.white_dot_depth_label = QLabel("depth: --")
+            self.white_dot_depth_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            dot_row = QHBoxLayout()
+            dot_row.addWidget(self.overlay_white_dot_cb)
+            dot_row.addStretch(1)
+            dot_row.addWidget(self.white_dot_depth_label)
+            stream_layout.addLayout(dot_row)
         except Exception:
             self.overlay_white_dot_cb = None
+            self.white_dot_depth_label = None
         self.camera_status = QLabel("Status: Disconnected")
         stream_layout.addWidget(self.camera_status)
-        left_layout.addWidget(stream_group)
+        left_layout.addWidget(self.stream_group)
 
         # Parameters group (kept but hidden, so dependent code can read defaults)
         params_group = QGroupBox("Parameters")
@@ -1189,6 +1197,7 @@ class RoboPointMainWindow(QMainWindow):
         - Allow pressing Start multiple times to re-home the arm.
         """
         try:
+            ros_camera = os.environ.get('VLMOTION_ROS_CAMERA') == '1'
             # Grasping uses the head camera (D435i); it is the one with aligned depth.
             try:
                 if getattr(self, 'current_camera', 'top camera') != 'head camera':
@@ -1197,8 +1206,10 @@ class RoboPointMainWindow(QMainWindow):
                         self.camera_selector.setCurrentText('head camera')
                     except Exception:
                         pass
-                    # Restart local direct capture or remote subscriber on D405
-                    if self.use_remote_stream:
+                    # ROS camera select is handled by the combo box callback.
+                    if ros_camera:
+                        pass
+                    elif self.use_remote_stream:
                         self.restart_camera_receiver()
                     else:
                         # If a direct camera is running for a different model, restart it on D405
@@ -1221,16 +1232,6 @@ class RoboPointMainWindow(QMainWindow):
 
             self.llm_session_active = True
 
-            # Ensure demo process is restarted so arm returns to initial pose
-            if self.manage_llm_demo_checkbox.isChecked():
-                try:
-                    if self.visual_servo_proc.proc and self.visual_servo_proc.proc.poll() is None:
-                        self.visual_servo_proc.stop()
-                        time.sleep(0.2)
-                except Exception:
-                    pass
-                self.visual_servo_proc.start(use_remote=self.use_remote_yolo)
-
             # Decide if we can start publishing a white point now
             px_py = None
             if (self.llm_tracked_px is not None) and (self.llm_tracked_py is not None):
@@ -1250,6 +1251,32 @@ class RoboPointMainWindow(QMainWindow):
                         self.llm_tracked_px, self.llm_tracked_py = int(px), int(py)
                         self.llm_tracker = None
                         px_py = (self.llm_tracked_px, self.llm_tracked_py)
+
+            if ros_camera:
+                link = self._ensure_ros_link()
+                link.start()
+                link.start_grasp(None if px_py is None else px_py[0], None if px_py is None else px_py[1])
+                if getattr(self, '_ros_grasp_timer', None) is None:
+                    self._ros_grasp_timer = QTimer(self)
+                    self._ros_grasp_timer.timeout.connect(self._publish_ros_grasp_target)
+                self._ros_grasp_timer.start(200)
+                if px_py is not None:
+                    self.llm_status.setText(f"LLM Grasping: publishing joint_pose_cmd ({px_py[0]}, {px_py[1]})")
+                else:
+                    self.llm_status.setText("LLM Grasping: publishing joint_pose_cmd, waiting for white point")
+                self.btn_stop_llm.setEnabled(True)
+                self.btn_start_llm.setEnabled(True)
+                return
+
+            # Ensure demo process is restarted so arm returns to initial pose
+            if self.manage_llm_demo_checkbox.isChecked():
+                try:
+                    if self.visual_servo_proc.proc and self.visual_servo_proc.proc.poll() is None:
+                        self.visual_servo_proc.stop()
+                        time.sleep(0.2)
+                except Exception:
+                    pass
+                self.visual_servo_proc.start(use_remote=self.use_remote_yolo)
 
             # Apply current decision: start/stop white-point publisher
             running_white = (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)
@@ -1282,8 +1309,19 @@ class RoboPointMainWindow(QMainWindow):
             logger.error(f"LLM Grasping start error: {e}")
             self.llm_status.setText("LLM Grasping: Error starting")
 
+    def _publish_ros_grasp_target(self):
+        if not self.llm_session_active or self.ros_link is None:
+            return
+        if self.llm_tracked_px is not None and self.llm_tracked_py is not None:
+            self.ros_link.update_grasp_pixel(int(self.llm_tracked_px), int(self.llm_tracked_py))
+
     def stop_llm_grasping(self):
         try:
+            timer = getattr(self, '_ros_grasp_timer', None)
+            if timer is not None:
+                timer.stop()
+            if self.ros_link is not None:
+                self.ros_link.stop_grasp()
             if self.manage_llm_demo_checkbox.isChecked():
                 self.visual_servo_proc.stop()
             self.white_point_proc.stop()
@@ -1296,6 +1334,20 @@ class RoboPointMainWindow(QMainWindow):
     def on_camera_status(self, text):
         self.camera_status.setText(f"Status: {text}")
 
+    def _note_stream_fps(self):
+        group = getattr(self, 'stream_group', None)
+        if group is None:
+            return
+        now = time.time()
+        prev = getattr(self, '_fps_stamp', None)
+        self._fps_stamp = now
+        if prev is None or now <= prev:
+            return
+        instant = 1.0 / (now - prev)
+        smooth = self._fps_smooth
+        self._fps_smooth = instant if smooth is None else (0.8 * smooth + 0.2 * instant)
+        group.setTitle(f"Camera Stream  {self._fps_smooth:.1f} fps")
+
     def on_camera_frame(self, output):
         try:
             # Throttle UI redraws to reduce choppiness from heavy image conversions
@@ -1307,6 +1359,7 @@ class RoboPointMainWindow(QMainWindow):
             except Exception:
                 pass
             self._frame_idx += 1
+            self._note_stream_fps()
             color_image = output.get('color_image', None)
             depth_image = output.get('depth_image', None)
             if color_image is None:
@@ -1517,6 +1570,7 @@ class RoboPointMainWindow(QMainWindow):
                             cv2.putText(vis, line, (tx, ty), font, font_scale, (255, 255, 255), t_fg, cv2.LINE_AA)
             except Exception:
                 pass
+            self._update_white_dot_depth_label()
             # Draw without PIL to keep GUI smooth
             self.image_label.load_rgb_np(vis)
             try:
@@ -1525,6 +1579,22 @@ class RoboPointMainWindow(QMainWindow):
                 pass
         except Exception as e:
             logger.error(f"Failed to handle camera frame: {e}")
+
+    def _update_white_dot_depth_label(self):
+        label = getattr(self, 'white_dot_depth_label', None)
+        if label is None:
+            return
+        text = 'depth: --'
+        px, py = self.llm_tracked_px, self.llm_tracked_py
+        link = getattr(self, 'ros_link', None)
+        if px is not None and py is not None and link is not None:
+            try:
+                meters = link.depth_meters(int(px), int(py))
+            except Exception:
+                meters = None
+            if meters is not None:
+                text = f'depth: {meters:.2f} m'
+        label.setText(text)
 
     def on_yolo_result(self, send_dict):
         self.latest_yolo_send_dict = send_dict
@@ -1835,9 +1905,15 @@ class RoboPointMainWindow(QMainWindow):
             self.llm_tracker = None  # Reset tracker to re-initialize with new point
             self.user_clicked_position = True  # Mark that user manually set the position
             
+            if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+                if self.llm_session_active and self.ros_link is not None:
+                    self.ros_link.update_grasp_pixel(self.llm_tracked_px, self.llm_tracked_py)
+                    self.llm_status.setText(
+                        f"LLM Grasping: publishing joint_pose_cmd ({self.llm_tracked_px}, {self.llm_tracked_py})"
+                    )
+                    self.btn_stop_llm.setEnabled(True)
             # If white_point process is running, restart it with new coordinates
-            running = (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)
-            if running:
+            elif (running := (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)):
                 try:
                     self.white_point_proc.stop()
                 except Exception:
@@ -2005,14 +2081,14 @@ class RoboPointMainWindow(QMainWindow):
             if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
                 link = self._ensure_ros_link()
                 link.start()
-                # Top camera is color-only. Aligned depth is on the head camera,
-                # and host_session will not command the base without it.
                 try:
-                    self.camera_selector.setCurrentText('head camera')
+                    camera = self.camera_selector.currentText() or self.current_camera
                 except Exception:
-                    pass
-                self.current_camera = 'head camera'
-                link.select('head camera')
+                    camera = getattr(self, 'current_camera', 'top camera')
+                if camera not in ('top camera', 'head camera'):
+                    camera = 'top camera'
+                self.current_camera = camera
+                link.select(camera)
                 link.publish_run(True)
                 if self._ros_pixel_timer is None:
                     self._ros_pixel_timer = QTimer(self)
@@ -2020,7 +2096,7 @@ class RoboPointMainWindow(QMainWindow):
                 self._ros_pixel_timer.start(200)
                 moving = os.environ.get('ENABLE_BASE_MOTION') == '1'
                 self.nav_status.setText(
-                    'LLM Navigation: head camera, publishing target'
+                    f'LLM Navigation: {camera}, publishing target'
                     + (' (base moves)' if moving else ' (base held)')
                 )
                 self.nav_start_btn.setEnabled(True)
@@ -2281,7 +2357,7 @@ class RoboPointMainWindow(QMainWindow):
 
                 # If an LLM session is active and the publisher isn't running yet,
                 # start grasping now when points arrive.
-                if self.llm_session_active:
+                if self.llm_session_active and os.environ.get('VLMOTION_ROS_CAMERA') != '1':
                     has_white_running = (self.white_point_proc.proc is not None) and (self.white_point_proc.proc.poll() is None)
                     if not has_white_running and len(self.latest_llm_points) > 0:
                         chosen = self._choose_point_from_crosses_by_density(self.latest_llm_points, radius=8)

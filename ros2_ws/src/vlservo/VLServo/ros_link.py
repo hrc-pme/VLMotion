@@ -17,13 +17,58 @@ TOP_CAMERA = 'top camera'
 CAMERAS = {
     TOP_CAMERA: {
         'color': '/camera_top/camera_top/color/image_raw/compressed',
-        'depth': '/camera_top/camera_top/aligned_depth_to_color/image_raw',
+        'depth': '/camera_top/camera_top/aligned_depth_to_color/image_raw/compressedDepth',
     },
     HEAD_CAMERA: {
         'color': '/head_camera/head_camera/color/image_raw/compressed',
-        'depth': '/head_camera/head_camera/aligned_depth_to_color/image_raw',
+        'depth': '/head_camera/head_camera/aligned_depth_to_color/image_raw/compressedDepth',
     },
 }
+
+
+def decode_compressed_depth(data):
+    """compressedDepth is a 12-byte header plus a PNG of 16-bit millimeters."""
+    raw = np.frombuffer(data, dtype=np.uint8)
+    if raw.size <= 16 or raw[12:16].tobytes() != b'\x89PNG':
+        return None
+    import cv2
+    img = cv2.imdecode(raw[12:], cv2.IMREAD_UNCHANGED)
+    if img is None or img.ndim != 2 or img.dtype != np.uint16:
+        return None
+    return img
+
+
+# Keep in step with vlmotion_host.host_session: same neighborhood and gap.
+_DEPTH_OFFSETS = (
+    (0, 0),
+    (-1, -1), (-1, 0), (-1, 1),
+    (0, -1), (0, 1),
+    (1, -1), (1, 0), (1, 1),
+    (-2, 0), (2, 0), (0, -2), (0, 2),
+)
+_DEPTH_GAP_M = 0.30
+_DEPTH_MIN_SAMPLES = 3
+
+
+def _robust_depth(samples):
+    ordered = sorted(z for z in samples if z is not None and z > 0.0)
+    best_mean = None
+    best_count = 0
+    count = len(ordered)
+    end = 0
+    for start in range(count):
+        if end < start:
+            end = start
+        while end + 1 < count and ordered[end + 1] - ordered[start] <= _DEPTH_GAP_M:
+            end += 1
+        cluster = end - start + 1
+        if cluster < _DEPTH_MIN_SAMPLES or cluster < best_count:
+            continue
+        mean = sum(ordered[start:end + 1]) / float(cluster)
+        if cluster > best_count or best_mean is None or mean < best_mean:
+            best_count = cluster
+            best_mean = mean
+    return best_mean
 
 
 def _sensor_qos():
@@ -47,14 +92,26 @@ class RosLink(QObject):
         self._spinning = False
         self._thread = None
         self._image_sub = None
+        self._depth_sub = None
+        self._depth_lock = threading.Lock()
+        self._depth = None
         self._camera = TOP_CAMERA
+        self._joints = {}
+        self._grasp_wanted = False
+        self._grasp_phase = 'idle'
+        self._grasp_future = None
+        self._grasp_px = None
+        self._grasp_py = None
+        self._grasp_log_t = 0.0
 
     def start(self):
         if not self.enabled or self.node is not None:
             return
         import rclpy
         from geometry_msgs.msg import Point
-        from std_msgs.msg import Bool, String
+        from sensor_msgs.msg import JointState
+        from std_msgs.msg import Bool, Float64MultiArray, String
+        from std_srvs.srv import Trigger
 
         if not rclpy.ok():
             rclpy.init()
@@ -63,6 +120,13 @@ class RosLink(QObject):
         self.pixel_pub = self.node.create_publisher(Point, '/vlmotion/target_pixel', 10)
         self.run_pub = self.node.create_publisher(Bool, '/vlmotion/run', 10)
         self.camera_pub = self.node.create_publisher(String, '/vlmotion/camera_select', 10)
+        self.pose_pub = self.node.create_publisher(Float64MultiArray, '/joint_pose_cmd', 1)
+        self.node.create_subscription(JointState, '/stretch/joint_states', self._on_joints, 10)
+        self._pos_client = self.node.create_client(Trigger, '/switch_to_position_mode')
+        self._nav_client = self.node.create_client(Trigger, '/switch_to_navigation_mode')
+        self._act_client = self.node.create_client(Trigger, '/activate_streaming_position')
+        self._deact_client = self.node.create_client(Trigger, '/deactivate_streaming_position')
+        self.node.create_timer(0.1, self._grasp_tick)
         self._spinning = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -80,9 +144,17 @@ class RosLink(QObject):
         if self._image_sub is not None:
             self.node.destroy_subscription(self._image_sub)
             self._image_sub = None
+        if self._depth_sub is not None:
+            self.node.destroy_subscription(self._depth_sub)
+            self._depth_sub = None
+        with self._depth_lock:
+            self._depth = None
         topic = CAMERAS[name]['color']
         self._image_sub = self.node.create_subscription(
             CompressedImage, topic, self._on_image, _sensor_qos(),
+        )
+        self._depth_sub = self.node.create_subscription(
+            CompressedImage, CAMERAS[name]['depth'], self._on_depth, _sensor_qos(),
         )
         msg = String()
         msg.data = name
@@ -101,6 +173,185 @@ class RosLink(QObject):
         if bgr is None:
             return
         self.frame_received.emit({'color_image': bgr})
+
+    def _on_depth(self, msg):
+        img = decode_compressed_depth(msg.data)
+        if img is None:
+            return
+        with self._depth_lock:
+            self._depth = img
+
+    def depth_meters(self, x, y):
+        """Mean of nearby valid depths, matching host_session._depth_at."""
+        with self._depth_lock:
+            img = None if self._depth is None else self._depth
+        if img is None:
+            return None
+        height, width = img.shape[:2]
+        samples = []
+        for dx, dy in _DEPTH_OFFSETS:
+            xi = int(x) + dx
+            yi = int(y) + dy
+            if xi < 0 or yi < 0 or xi >= width or yi >= height:
+                continue
+            millimeters = int(img[yi, xi])
+            if millimeters > 0:
+                samples.append(millimeters / 1000.0)
+        return _robust_depth(samples)
+
+    def _on_joints(self, msg):
+        self._joints = {name: position for name, position in zip(msg.name, msg.position)}
+
+    def start_grasp(self, px, py):
+        self._grasp_px = None if px is None else int(px)
+        self._grasp_py = None if py is None else int(py)
+        self._grasp_wanted = True
+
+    def update_grasp_pixel(self, px, py):
+        if px is None or py is None:
+            return
+        self._grasp_px = int(px)
+        self._grasp_py = int(py)
+
+    def stop_grasp(self):
+        self._grasp_wanted = False
+
+    def _qpos_hold(self):
+        joints = self._joints
+        names = (
+            'joint_lift', 'joint_wrist_yaw', 'joint_wrist_pitch', 'joint_wrist_roll',
+            'joint_head_pan', 'joint_head_tilt', 'joint_gripper_finger_left',
+        )
+        if any(name not in joints for name in names):
+            return None
+        if 'wrist_extension' in joints:
+            arm = float(joints['wrist_extension'])
+        else:
+            parts = [joints.get(name) for name in (
+                'joint_arm_l0', 'joint_arm_l1', 'joint_arm_l2', 'joint_arm_l3',
+            )]
+            if any(part is None for part in parts):
+                return None
+            arm = float(sum(parts))
+        return [
+            arm,
+            float(joints['joint_lift']),
+            float(joints['joint_wrist_yaw']),
+            float(joints['joint_wrist_pitch']),
+            float(joints['joint_wrist_roll']),
+            float(joints['joint_head_pan']),
+            float(joints['joint_head_tilt']),
+            float(joints['joint_gripper_finger_left']),
+            0.0,
+            0.0,
+        ]
+
+    def _call_trigger(self, client):
+        from std_srvs.srv import Trigger
+        if not client.service_is_ready():
+            return None
+        return client.call_async(Trigger.Request())
+
+    def _grasp_tick(self):
+        phase = self._grasp_phase
+        future = self._grasp_future
+        if self._grasp_wanted and phase == 'idle':
+            pending = self._call_trigger(self._pos_client)
+            if pending is None:
+                return
+            self._grasp_future = pending
+            self._grasp_phase = 'to_position'
+            self.node.get_logger().info('grasp: switching to position mode')
+            return
+        if phase in ('to_position', 'to_stream', 'to_deact', 'to_nav'):
+            if future is None or not future.done():
+                return
+            if phase == 'to_position':
+                if not self._grasp_wanted:
+                    self._grasp_phase = 'idle'
+                    self._grasp_future = None
+                    return
+                pending = self._call_trigger(self._act_client)
+                if pending is None:
+                    return
+                self._grasp_future = pending
+                self._grasp_phase = 'to_stream'
+                self.node.get_logger().info('grasp: activating streaming position')
+                return
+            if phase == 'to_stream':
+                self._grasp_future = None
+                self._grasp_phase = 'run'
+                if self._grasp_wanted:
+                    self.node.get_logger().info('grasp: publishing /joint_pose_cmd')
+                return
+            if phase == 'to_deact':
+                pending = self._call_trigger(self._nav_client)
+                if pending is None:
+                    return
+                self._grasp_future = pending
+                self._grasp_phase = 'to_nav'
+                return
+            self._grasp_future = None
+            self._grasp_phase = 'idle'
+            self.node.get_logger().info('grasp: streaming off, navigation mode')
+            return
+        if phase == 'run' and not self._grasp_wanted:
+            pending = self._call_trigger(self._deact_client)
+            if pending is None:
+                return
+            self._grasp_future = pending
+            self._grasp_phase = 'to_deact'
+            return
+        if phase == 'run':
+            self._publish_grasp_pose()
+
+    def _publish_grasp_pose(self):
+        from std_msgs.msg import Float64MultiArray
+        qpos = self._qpos_hold()
+        if qpos is None:
+            return
+        px, py = self._grasp_px, self._grasp_py
+        with self._depth_lock:
+            depth = None if self._depth is None else self._depth
+        if px is not None and py is not None and depth is not None:
+            height, width = depth.shape[:2]
+            cx = (width - 1) / 2.0
+            cy = (height - 1) / 2.0
+            if self._camera == HEAD_CAMERA:
+                yaw_err = (float(py) - cy) / max(height, 1)
+                lift_err = (cx - float(px)) / max(width, 1)
+            else:
+                yaw_err = -(float(px) - cx) / max(width, 1)
+                lift_err = (cy - float(py)) / max(height, 1)
+            z_m = self.depth_meters(px, py)
+            centered = abs(yaw_err) < 0.05 and abs(lift_err) < 0.05
+            closing = z_m is not None and z_m <= 0.28 and centered
+            if closing:
+                v_arm = 0.0
+                v_lift = 0.0
+                rotate = 0.0
+                grip_target = 0.0
+            else:
+                dist_err = 0.0 if z_m is None else (z_m - 0.38)
+                v_arm = 0.0 if z_m is None else max(-0.10, min(0.18, 0.8 * dist_err))
+                v_lift = max(-0.06, min(0.06, 0.6 * lift_err))
+                rotate = max(-0.015, min(0.015, 0.8 * yaw_err))
+                grip_target = 0.45
+            qpos[0] = max(0.0, min(0.52, qpos[0] + v_arm * 0.1))
+            qpos[1] = max(0.2, min(1.10, qpos[1] + v_lift * 0.1))
+            qpos[7] = qpos[7] + max(-0.05, min(0.05, grip_target - qpos[7]))
+            qpos[9] = rotate
+            now = self.node.get_clock().now().nanoseconds * 1e-9
+            if now - self._grasp_log_t > 2.0:
+                self._grasp_log_t = now
+                z_text = '--' if z_m is None else f'{z_m:.2f}'
+                self.node.get_logger().info(
+                    f'grasp cmd arm={qpos[0]:.3f} lift={qpos[1]:.3f} '
+                    f'yaw={qpos[9]:+.3f} z={z_text}'
+                )
+        msg = Float64MultiArray()
+        msg.data = [float(value) for value in qpos]
+        self.pose_pub.publish(msg)
 
     def publish_user_input(self, text: str):
         if self.node is None or not text:
