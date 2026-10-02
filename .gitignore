@@ -52,6 +52,9 @@ temp/
 *.bak
 *.backup
 
+# Local model cache (Hugging Face weights)
+.cache/
+
 # Model checkpoints and data
 *.pth
 *.ckpt
