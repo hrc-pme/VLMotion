@@ -734,7 +734,7 @@ class DirectCameraThread(QThread):
             import zmq
             from VLServo import yolo_networking as yn
             # Lazy import pyrealsense helpers based on selection
-            if self.camera in ('D405', 'top camera'):
+            if self.camera in ('D405', 'top camera', 'gripper camera'):
                 from VLServo import d405_helpers as dh
                 pipeline, profile = dh.start_d405(self.exposure)
                 port = yn.d405_port
@@ -986,7 +986,7 @@ class RoboPointMainWindow(QMainWindow):
         sender_group = QGroupBox("Camera")
         sender_layout = QVBoxLayout(sender_group)
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Camera:"))
-        self.camera_selector = QComboBox(); self.camera_selector.addItems(["top camera", "head camera"]) ; row1.addWidget(self.camera_selector)
+        self.camera_selector = QComboBox(); self.camera_selector.addItems(["top camera", "head camera", "gripper camera"]) ; row1.addWidget(self.camera_selector)
         sender_layout.addLayout(row1)
         row2 = QHBoxLayout(); row2.addWidget(QLabel("Exposure:"))
         self.exposure_selector = QComboBox(); self.exposure_selector.addItems(["low", "medium", "auto"]) ; row2.addWidget(self.exposure_selector)
@@ -1189,35 +1189,8 @@ class RoboPointMainWindow(QMainWindow):
         - Allow pressing Start multiple times to re-home the arm.
         """
         try:
-            # Grasping uses the head camera (D435i); it is the one with aligned depth.
-            try:
-                if getattr(self, 'current_camera', 'top camera') != 'head camera':
-                    self.current_camera = 'head camera'
-                    try:
-                        self.camera_selector.setCurrentText('head camera')
-                    except Exception:
-                        pass
-                    # Restart local direct capture or remote subscriber on D405
-                    if self.use_remote_stream:
-                        self.restart_camera_receiver()
-                    else:
-                        # If a direct camera is running for a different model, restart it on D405
-                        if self.direct_camera_thread is not None:
-                            try:
-                                self.direct_camera_thread.stop(); self.direct_camera_thread.wait(1000)
-                            except Exception:
-                                pass
-                            self.direct_camera_thread = None
-                        try:
-                            self.direct_camera_thread = DirectCameraThread(camera='head camera', exposure=self.exposure_selector.currentText())
-                            self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
-                            self.direct_camera_thread.status_changed.connect(self.on_camera_status)
-                            self.direct_camera_thread.start()
-                            self.btn_start_sender.setEnabled(False); self.btn_stop_sender.setEnabled(True)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            # Grasping looks through the wrist D405. Switch before any motion.
+            self._activate_gripper_camera()
 
             self.llm_session_active = True
 
@@ -1897,6 +1870,48 @@ class RoboPointMainWindow(QMainWindow):
         except Exception as e:
             logger.warning(f"Head tilt set failed: {e}")
 
+    def _activate_gripper_camera(self):
+        """Select gripper camera and subscribe before grasping starts."""
+        from .ros_link import GRIPPER_CAMERA
+
+        self.current_camera = GRIPPER_CAMERA
+        selector = getattr(self, 'camera_selector', None)
+        if selector is not None and selector.currentText() != GRIPPER_CAMERA:
+            selector.blockSignals(True)
+            selector.setCurrentText(GRIPPER_CAMERA)
+            selector.blockSignals(False)
+
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            self._start_ros_camera()
+            self._ensure_ros_link().select(GRIPPER_CAMERA)
+            return
+
+        if self.use_remote_stream:
+            self.restart_camera_receiver()
+            return
+
+        running = self.direct_camera_thread
+        if running is not None and getattr(running, 'camera', None) == GRIPPER_CAMERA:
+            return
+
+        if self.direct_camera_thread is not None:
+            try:
+                self.direct_camera_thread.stop()
+                self.direct_camera_thread.wait(1000)
+            except Exception:
+                pass
+            self.direct_camera_thread = None
+        try:
+            exposure = self.exposure_selector.currentText()
+            self.direct_camera_thread = DirectCameraThread(camera=GRIPPER_CAMERA, exposure=exposure)
+            self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
+            self.direct_camera_thread.status_changed.connect(self.on_camera_status)
+            self.direct_camera_thread.start()
+            self.btn_start_sender.setEnabled(False)
+            self.btn_stop_sender.setEnabled(True)
+        except Exception:
+            pass
+
     def _ensure_ros_link(self):
         if self.ros_link is None:
             from .ros_link import RosLink
@@ -2005,14 +2020,13 @@ class RoboPointMainWindow(QMainWindow):
             if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
                 link = self._ensure_ros_link()
                 link.start()
-                # Top camera is color-only. Aligned depth is on the head camera,
-                # and host_session will not command the base without it.
+                # Republish the camera the GUI is showing so host_session
+                # subscribes to that camera's aligned depth.
                 try:
-                    self.camera_selector.setCurrentText('head camera')
+                    self.current_camera = self.camera_selector.currentText() or 'top camera'
                 except Exception:
-                    pass
-                self.current_camera = 'head camera'
-                link.select('head camera')
+                    self.current_camera = 'top camera'
+                link.select(self.current_camera)
                 link.publish_run(True)
                 if self._ros_pixel_timer is None:
                     self._ros_pixel_timer = QTimer(self)
@@ -2020,7 +2034,7 @@ class RoboPointMainWindow(QMainWindow):
                 self._ros_pixel_timer.start(200)
                 moving = os.environ.get('ENABLE_BASE_MOTION') == '1'
                 self.nav_status.setText(
-                    'LLM Navigation: head camera, publishing target'
+                    f'LLM Navigation: {self.current_camera}, publishing target'
                     + (' (base moves)' if moving else ' (base held)')
                 )
                 self.nav_start_btn.setEnabled(True)

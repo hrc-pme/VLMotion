@@ -17,6 +17,7 @@ from std_msgs.msg import Bool, String
 DEPTH_TOPICS = {
     'top camera': '/camera_top/camera_top/aligned_depth_to_color/image_raw',
     'head camera': '/head_camera/head_camera/aligned_depth_to_color/image_raw',
+    'gripper camera': '/gripper_camera/gripper_camera/aligned_depth_to_color/image_raw',
 }
 
 
