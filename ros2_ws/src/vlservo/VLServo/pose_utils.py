@@ -46,6 +46,29 @@ def set_head_tilt_deg(deg: float) -> None:
         except Exception:
             pass
 
+def set_gripper_cam_grasp_wrist_pose() -> None:
+    """Wrist yaw/pitch/roll so the D405 view matches arm extend/retract."""
+    robot = _with_robot()
+    try:
+        if hasattr(robot, 'end_of_arm'):
+            jy = robot.end_of_arm.get_joint('wrist_yaw')
+            if jy is not None:
+                jy.move_to(math.pi / 2.0)
+            jp = robot.end_of_arm.get_joint('wrist_pitch')
+            if jp is not None:
+                jp.move_to(0.0)
+            jr = robot.end_of_arm.get_joint('wrist_roll')
+            if jr is not None:
+                jr.move_to(0.0)
+        robot.push_command()
+        robot.wait_command()
+    finally:
+        try:
+            robot.stop()
+        except Exception:
+            pass
+
+
 def set_wrist_pitch_deg(deg: float) -> None:
     """Set wrist pitch angle in degrees immediately; 0 deg is level.
 

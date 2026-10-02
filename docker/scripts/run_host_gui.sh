@@ -8,7 +8,8 @@
 #   top camera     = D415  /camera_top/camera_top/...
 #   head camera    = D435i /head_camera/head_camera/...
 #   gripper camera = D405  /gripper_camera/gripper_camera/...
-#   Start LLM Grasping switches to gripper camera before the arm moves.
+#   LLM Grasping requires selecting gripper camera first; switching drives wrist
+#   pose so the D405 view matches arm extend/retract (see stretch3 /tf).
 #   /vlmotion/camera_select         String   GUI → host_session
 #   /vlmotion/user_input            String   GUI → host
 #   /vlmotion/run                   Bool     GUI → host

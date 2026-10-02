@@ -109,6 +109,14 @@ class RosLink(QObject):
         self._grasp_px = None
         self._grasp_py = None
         self._grasp_log_t = 0.0
+        self._tf = None
+        self._camera_info = None
+        self._camera_info_sub = None
+        self._align_wanted = False
+        self._align_phase = 'idle'
+        self._align_future = None
+        self._align_log_t = 0.0
+        self._gripper_cam_aligned = False
 
     def start(self):
         if not self.enabled or self.node is not None:
@@ -132,6 +140,9 @@ class RosLink(QObject):
         self._nav_client = self.node.create_client(Trigger, '/switch_to_navigation_mode')
         self._act_client = self.node.create_client(Trigger, '/activate_streaming_position')
         self._deact_client = self.node.create_client(Trigger, '/deactivate_streaming_position')
+        from .stretch3_tf_grasp import Stretch3TfBuffer
+
+        self._tf = Stretch3TfBuffer(self.node)
         self.node.create_timer(0.1, self._grasp_tick)
         self._spinning = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -155,6 +166,10 @@ class RosLink(QObject):
             self._depth_sub = None
         with self._depth_lock:
             self._depth = None
+        self._camera_info = None
+        if self._camera_info_sub is not None:
+            self.node.destroy_subscription(self._camera_info_sub)
+            self._camera_info_sub = None
         topic = CAMERAS[name]['color']
         self._image_sub = self.node.create_subscription(
             CompressedImage, topic, self._on_image, _sensor_qos(),
@@ -162,6 +177,13 @@ class RosLink(QObject):
         self._depth_sub = self.node.create_subscription(
             CompressedImage, CAMERAS[name]['depth'], self._on_depth, _sensor_qos(),
         )
+        if name == GRIPPER_CAMERA:
+            from sensor_msgs.msg import CameraInfo
+
+            info_topic = '/gripper_camera/gripper_camera/color/camera_info'
+            self._camera_info_sub = self.node.create_subscription(
+                CameraInfo, info_topic, self._on_camera_info, _sensor_qos(),
+            )
         msg = String()
         msg.data = name
         self.camera_pub.publish(msg)
@@ -186,6 +208,19 @@ class RosLink(QObject):
             return
         with self._depth_lock:
             self._depth = img
+
+    def _on_camera_info(self, msg):
+        k = list(msg.k)
+        self._camera_info = {
+            'camera_matrix': np.array([
+                [k[0], k[1], k[2]],
+                [k[3], k[4], k[5]],
+                [k[6], k[7], k[8]],
+            ], dtype=np.float64),
+            'distortion_coefficients': np.array(list(msg.d), dtype=np.float64),
+            'width': int(msg.width),
+            'height': int(msg.height),
+        }
 
     def depth_meters(self, x, y):
         """Mean of nearby valid depths, matching host_session._depth_at."""
@@ -221,6 +256,17 @@ class RosLink(QObject):
 
     def stop_grasp(self):
         self._grasp_wanted = False
+
+    def is_gripper_cam_aligned(self) -> bool:
+        return bool(self._gripper_cam_aligned)
+
+    def request_gripper_cam_alignment(self):
+        """Drive wrist joints so gripper cam view matches arm extend direction."""
+        if self._camera != GRIPPER_CAMERA:
+            return
+        self._align_wanted = True
+        self._gripper_cam_aligned = False
+        self._align_start_t = 0.0
 
     def _qpos_hold(self):
         joints = self._joints
@@ -259,6 +305,8 @@ class RosLink(QObject):
         return client.call_async(Trigger.Request())
 
     def _grasp_tick(self):
+        if self._align_wanted:
+            self._align_tick()
         phase = self._grasp_phase
         future = self._grasp_future
         if self._grasp_wanted and phase == 'idle':
@@ -311,6 +359,98 @@ class RosLink(QObject):
         if phase == 'run':
             self._publish_grasp_pose()
 
+    def _alignment_qpos(self, qpos):
+        from .stretch3_tf_grasp import (
+            GRASP_WRIST_PITCH_RAD,
+            GRASP_WRIST_ROLL_RAD,
+            GRASP_WRIST_YAW_RAD,
+        )
+
+        qpos[2] = GRASP_WRIST_YAW_RAD
+        qpos[3] = GRASP_WRIST_PITCH_RAD
+        qpos[4] = GRASP_WRIST_ROLL_RAD
+        return qpos
+
+    def _align_tick(self):
+        from .stretch3_tf_grasp import optical_z_alignment_with_arm
+
+        phase = self._align_phase
+        future = self._align_future
+        if phase == 'idle':
+            pending = self._call_trigger(self._pos_client)
+            if pending is None:
+                return
+            self._align_future = pending
+            self._align_phase = 'to_position'
+            return
+        if phase == 'to_position':
+            if future is None or not future.done():
+                return
+            pending = self._call_trigger(self._act_client)
+            if pending is None:
+                return
+            self._align_future = pending
+            self._align_phase = 'to_stream'
+            return
+        if phase == 'to_stream':
+            if future is not None and not future.done():
+                return
+            self._align_future = None
+            self._align_phase = 'run'
+            return
+        if phase == 'run':
+            qpos = self._qpos_hold()
+            if qpos is None:
+                return
+            qpos = self._alignment_qpos(qpos)
+            from std_msgs.msg import Float64MultiArray
+
+            msg = Float64MultiArray()
+            msg.data = [float(value) for value in qpos]
+            self.pose_pub.publish(msg)
+            now = self.node.get_clock().now().nanoseconds * 1e-9
+            if self._align_start_t <= 0.0:
+                self._align_start_t = now
+            aligned = False
+            if self._tf is not None:
+                dot = optical_z_alignment_with_arm(self._tf)
+                aligned = dot is not None and dot >= 0.92
+            if not aligned and (now - self._align_start_t) >= 8.0:
+                aligned = True
+                self.node.get_logger().warn(
+                    'align gripper cam: TF alignment timeout; accepting nominal wrist pose'
+                )
+            if aligned:
+                self._align_wanted = False
+                self._align_phase = 'idle'
+                self._gripper_cam_aligned = True
+                self.status_changed.emit('Gripper cam aligned with arm axis')
+                pending = self._call_trigger(self._deact_client)
+                if pending is not None:
+                    self._align_future = pending
+                    self._align_phase = 'to_deact'
+                return
+            if now - self._align_log_t > 2.0:
+                self._align_log_t = now
+                self.node.get_logger().info('align gripper cam: holding wrist pose')
+            return
+        if phase == 'to_deact':
+            if future is None or not future.done():
+                return
+            pending = self._call_trigger(self._nav_client)
+            if pending is None:
+                return
+            self._align_future = pending
+            self._align_phase = 'to_nav'
+            return
+        if phase == 'to_nav':
+            if future is not None and not future.done():
+                return
+            self._align_future = None
+            self._align_phase = 'idle'
+            if not self._gripper_cam_aligned:
+                self._align_wanted = False
+
     def _publish_grasp_pose(self):
         from std_msgs.msg import Float64MultiArray
         qpos = self._qpos_hold()
@@ -320,6 +460,7 @@ class RosLink(QObject):
         with self._depth_lock:
             depth = None if self._depth is None else self._depth
         if px is not None and py is not None and depth is not None:
+            z_m = self.depth_meters(px, py)
             height, width = depth.shape[:2]
             cx = (width - 1) / 2.0
             cy = (height - 1) / 2.0
@@ -329,7 +470,21 @@ class RosLink(QObject):
             else:
                 yaw_err = -(float(px) - cx) / max(width, 1)
                 lift_err = (cy - float(py)) / max(height, 1)
-            z_m = self.depth_meters(px, py)
+
+            arm_err_m = None
+            lift_err_m = None
+            if (
+                self._camera == GRIPPER_CAMERA
+                and self._tf is not None
+                and self._camera_info is not None
+                and z_m is not None
+            ):
+                from .stretch3_tf_grasp import arm_lift_errors_m
+
+                tf_err = arm_lift_errors_m(self._tf, px, py, z_m, self._camera_info)
+                if tf_err is not None:
+                    arm_err_m, lift_err_m = tf_err
+
             centered = abs(yaw_err) < 0.05 and abs(lift_err) < 0.05
             closing = z_m is not None and z_m <= 0.28 and centered
             if closing:
@@ -337,6 +492,11 @@ class RosLink(QObject):
                 v_lift = 0.0
                 rotate = 0.0
                 grip_target = 0.0
+            elif arm_err_m is not None and lift_err_m is not None:
+                v_arm = max(-0.10, min(0.18, 0.55 * arm_err_m))
+                v_lift = max(-0.06, min(0.06, 0.45 * lift_err_m))
+                rotate = max(-0.015, min(0.015, 0.8 * yaw_err))
+                grip_target = 0.45
             else:
                 dist_err = 0.0 if z_m is None else (z_m - 0.38)
                 v_arm = 0.0 if z_m is None else max(-0.10, min(0.18, 0.8 * dist_err))
@@ -351,10 +511,16 @@ class RosLink(QObject):
             if now - self._grasp_log_t > 2.0:
                 self._grasp_log_t = now
                 z_text = '--' if z_m is None else f'{z_m:.2f}'
-                self.node.get_logger().info(
-                    f'grasp cmd arm={qpos[0]:.3f} lift={qpos[1]:.3f} '
-                    f'yaw={qpos[9]:+.3f} z={z_text}'
-                )
+                if arm_err_m is not None:
+                    self.node.get_logger().info(
+                        f'grasp tf arm_err={arm_err_m:+.3f} lift_err={lift_err_m:+.3f} '
+                        f'arm={qpos[0]:.3f} lift={qpos[1]:.3f} z={z_text}'
+                    )
+                else:
+                    self.node.get_logger().info(
+                        f'grasp cmd arm={qpos[0]:.3f} lift={qpos[1]:.3f} '
+                        f'yaw={qpos[9]:+.3f} z={z_text}'
+                    )
         msg = Float64MultiArray()
         msg.data = [float(value) for value in qpos]
         self.pose_pub.publish(msg)
