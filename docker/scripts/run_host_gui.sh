@@ -1,5 +1,6 @@
 #!/bin/bash
 # Host GUI + session node for service `vlmotion`.
+# host_session calls /switch_to_navigation_mode once the Stretch driver is reachable.
 #
 # ENABLE_BASE_MOTION=1 lets the bridge forward /vlmotion/cmd_vel. The host
 # still publishes zeros until Start LLM Navigation has a target and depth.

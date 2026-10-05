@@ -11,6 +11,9 @@
 # Host:
 #   ./run.sh 4060ti zenoh-router
 #   ./run.sh 4060ti vlmotion 30
+#
+# Publishes /stretch/cmd_vel only while enable_base_motion is true and the
+# driver reports navigation mode (avoids stretch_driver cmd_vel errors).
 
 set -euo pipefail
 
@@ -27,6 +30,17 @@ fi
 # shellcheck disable=SC1090
 source "${WS_INSTALL}"
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/zenoh/zenoh-env.sh"
+ZENOH_HOST="${ZENOH_ROUTER_HOST:-$(zenoh_router_host)}"
+ZENOH_PORT="${ZENOH_ROUTER_PORT:-$(zenoh_router_port)}"
+if ! zenoh_wait_for_router "${ZENOH_HOST}" "${ZENOH_PORT}" 120; then
+  echo "[run_robot_bridge] error: Zenoh router not reachable at ${ZENOH_HOST}:${ZENOH_PORT}" >&2
+  echo "[run_robot_bridge] start host router: ./run.sh 4060ti zenoh-router" >&2
+  exit 1
+fi
 
 echo "[run_robot_bridge] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}"
 echo "[run_robot_bridge] RMW=${RMW_IMPLEMENTATION:-}"

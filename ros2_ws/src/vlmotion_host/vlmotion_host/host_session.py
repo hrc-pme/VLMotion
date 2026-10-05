@@ -86,6 +86,7 @@ class HostSession(Node):
         self.declare_parameter('stop_dist_m', 0.8)
         self.declare_parameter('k_lin', 0.4)
         self.declare_parameter('k_ang', 0.8)
+        self.declare_parameter('switch_to_navigation_on_start', True)
 
         raw = str(self.get_parameter('enable_base_motion').value).strip().lower()
         self.enable_base = raw in ('1', 'true', 'yes')
@@ -119,6 +120,44 @@ class HostSession(Node):
         self.get_logger().info(
             f'enable_base_motion={self.enable_base} camera={self._camera}'
         )
+
+        self._nav_mode_done = False
+        self._nav_mode_future = None
+        self._nav_mode_client = None
+        if bool(self.get_parameter('switch_to_navigation_on_start').value):
+            from std_srvs.srv import Trigger
+
+            self._nav_mode_client = self.create_client(
+                Trigger, '/switch_to_navigation_mode',
+            )
+            self.create_timer(1.0, self._ensure_navigation_mode)
+
+    def _ensure_navigation_mode(self):
+        if self._nav_mode_done or self._nav_mode_client is None:
+            return
+        if self._nav_mode_future is not None and not self._nav_mode_future.done():
+            return
+        if not self._nav_mode_client.service_is_ready():
+            self.get_logger().info('waiting for /switch_to_navigation_mode…')
+            return
+        from std_srvs.srv import Trigger
+
+        self._nav_mode_future = self._nav_mode_client.call_async(Trigger.Request())
+        self._nav_mode_future.add_done_callback(self._on_navigation_mode_result)
+
+    def _on_navigation_mode_result(self, future):
+        self._nav_mode_done = True
+        self._nav_mode_future = None
+        try:
+            response = future.result()
+            if response.success:
+                self.get_logger().info(f'stretch driver: {response.message}')
+            else:
+                self.get_logger().warn(
+                    f'switch_to_navigation_mode failed: {response.message}'
+                )
+        except Exception as exc:
+            self.get_logger().warn(f'switch_to_navigation_mode call failed: {exc}')
 
     def _subscribe_depth(self, topic: str):
         if self._depth_sub is not None:
