@@ -1,0 +1,2242 @@
+[
+  {
+    "id": "eb19_frame_0218_up",
+    "image": "eb19_frame_0239.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.977, 0.811)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0218_down",
+    "image": "eb19_frame_0239.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.964, 0.872)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0040_up",
+    "image": "eb21_frame_0043.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.973, 0.627)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0040_down",
+    "image": "eb21_frame_0043.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.947, 0.679)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0238_up",
+    "image": "button2_frame_0360.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.755, 0.606), (0.757, 0.800)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0238_down",
+    "image": "button2_frame_0360.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.751, 0.660), (0.755, 0.848)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0724_up",
+    "image": "button6_frame_0084.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.939, 0.374), (0.895, 0.561)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0724_down",
+    "image": "button6_frame_0084.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nShow me the down button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.920, 0.427), (0.883, 0.604)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0039_up",
+    "image": "eb22_frame_0040.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.977, 0.451), (0.916, 0.673)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0039_down",
+    "image": "eb22_frame_0040.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.956, 0.520), (0.904, 0.724)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0919_up",
+    "image": "button6_frame_0279.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.515, 0.468), (0.519, 0.646)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0919_down",
+    "image": "button6_frame_0279.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.517, 0.516), (0.527, 0.685)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0523_up",
+    "image": "button5_frame_0280.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.634, 0.576), (0.638, 0.760)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0523_down",
+    "image": "button5_frame_0280.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.636, 0.626), (0.644, 0.808)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0114_up",
+    "image": "button2_frame_0196.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.249, 0.660), (0.259, 0.861)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0114_down",
+    "image": "button2_frame_0196.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.253, 0.716), (0.266, 0.911)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3437_up",
+    "image": "rotated_frame_0232.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.885, 0.552), (0.881, 0.746)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3437_down",
+    "image": "rotated_frame_0232.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.887, 0.605), (0.876, 0.794)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0552_up",
+    "image": "button5_frame_0309.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nShow me the up button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.788, 0.582), (0.793, 0.774)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0552_down",
+    "image": "button5_frame_0309.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.797, 0.636), (0.799, 0.822)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0334_up",
+    "image": "button5_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.613, 0.406), (0.613, 0.578)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0334_down",
+    "image": "button5_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the down button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.609, 0.455), (0.611, 0.621)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0704_up",
+    "image": "button6_frame_0064.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.763, 0.328), (0.726, 0.516)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0704_down",
+    "image": "button6_frame_0064.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a lower floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.747, 0.380), (0.732, 0.555)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0493_up",
+    "image": "button5_frame_0250.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.872, 0.511), (0.864, 0.696)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0493_down",
+    "image": "button5_frame_0250.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.866, 0.561), (0.862, 0.742)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0158_up",
+    "image": "button2_frame_0258.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.778, 0.718), (0.793, 0.927)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0158_down",
+    "image": "button2_frame_0258.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.782, 0.773), (0.795, 0.985)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0811_up",
+    "image": "button6_frame_0171.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.584, 0.392), (0.586, 0.565)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0811_down",
+    "image": "button6_frame_0171.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to descend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.581, 0.439), (0.584, 0.606)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0092_up",
+    "image": "eb22_frame_0110.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.914, 0.559), (0.887, 0.794)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0092_down",
+    "image": "eb22_frame_0110.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.908, 0.633), (0.885, 0.851)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0273_up",
+    "image": "button5_frame_0028.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a higher floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.493), (0.473, 0.673)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0273_down",
+    "image": "button5_frame_0028.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.548), (0.477, 0.716)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3364_up",
+    "image": "rotated_frame_0088.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.634, 0.542), (0.630, 0.718)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3364_down",
+    "image": "rotated_frame_0088.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.630, 0.586), (0.630, 0.759)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3346_up",
+    "image": "rotated_frame_0045.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.738, 0.473), (0.734, 0.681)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3346_down",
+    "image": "rotated_frame_0045.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.738, 0.535), (0.730, 0.731)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0953_up",
+    "image": "button6_frame_0313.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.770, 0.546), (0.768, 0.731)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0953_down",
+    "image": "button6_frame_0313.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the down button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.768, 0.598), (0.765, 0.774)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3399_up",
+    "image": "rotated_frame_0151.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPoint me to the upward button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.630, 0.546), (0.634, 0.785)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3399_down",
+    "image": "rotated_frame_0151.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.627, 0.615), (0.625, 0.841)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3404_up",
+    "image": "rotated_frame_0160.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.550, 0.548), (0.558, 0.795)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3404_down",
+    "image": "rotated_frame_0160.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.550, 0.615), (0.558, 0.852)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0180_up",
+    "image": "button2_frame_0292.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.439, 0.722), (0.452, 0.929)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0180_down",
+    "image": "button2_frame_0292.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.445, 0.780), (0.450, 0.984)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0037_up",
+    "image": "button2_frame_0042.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the up button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.690, 0.544), (0.692, 0.732)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_0037_down",
+    "image": "button2_frame_0042.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.690, 0.598), (0.692, 0.776)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2720_up",
+    "image": "eb17_frame_0049.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.849, 0.460), (0.809, 0.681), (0.985, 0.708)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2720_down",
+    "image": "eb17_frame_0049.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the down button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.837, 0.528), (0.799, 0.733), (0.973, 0.760)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0109_up",
+    "image": "eb20_frame_0114.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the up button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.809, 0.481), (0.768, 0.727), (0.956, 0.726)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0109_down",
+    "image": "eb20_frame_0114.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to descend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.799, 0.558), (0.768, 0.782), (0.945, 0.780)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1960_up",
+    "image": "eb12_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.569, 0.347), (0.567, 0.588), (0.753, 0.332), (0.722, 0.566)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1960_down",
+    "image": "eb12_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.569, 0.424), (0.565, 0.638), (0.747, 0.405), (0.707, 0.612)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2669_up",
+    "image": "eb16_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.452, 0.484), (0.464, 0.698), (0.623, 0.468), (0.615, 0.684)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2669_down",
+    "image": "eb16_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.552), (0.471, 0.748), (0.617, 0.533), (0.609, 0.732)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1608_up",
+    "image": "eb11_frame_0082.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.897, 0.480), (0.899, 0.551), (0.950, 0.480), (0.952, 0.551)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1608_down",
+    "image": "eb11_frame_0082.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to descend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.899, 0.502), (0.897, 0.566), (0.950, 0.500), (0.945, 0.571)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2388_up",
+    "image": "eb14_frame_0090.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.690, 0.354), (0.676, 0.559), (0.849, 0.369), (0.807, 0.588)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2388_down",
+    "image": "eb14_frame_0090.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to descend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.686, 0.418), (0.663, 0.605), (0.830, 0.441), (0.793, 0.639)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3037_up",
+    "image": "eb8_frame_0242.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.441, 0.471), (0.443, 0.539), (0.489, 0.467), (0.494, 0.541)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3037_down",
+    "image": "eb8_frame_0242.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.443, 0.489), (0.445, 0.559), (0.494, 0.488), (0.492, 0.559)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2057_up",
+    "image": "eb12_frame_0116.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.324, 0.412), (0.347, 0.613), (0.471, 0.400), (0.481, 0.594)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2057_down",
+    "image": "eb12_frame_0116.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.335, 0.474), (0.356, 0.662), (0.466, 0.458), (0.485, 0.640)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0120_up",
+    "image": "eb19_frame_0121.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a higher floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.464, 0.422), (0.477, 0.638), (0.619, 0.401), (0.607, 0.609)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0120_down",
+    "image": "eb19_frame_0121.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a lower floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.475, 0.488), (0.477, 0.691), (0.611, 0.468), (0.602, 0.660)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1632_up",
+    "image": "eb11_frame_0111.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.617, 0.436), (0.615, 0.508), (0.665, 0.438), (0.663, 0.507)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1632_down",
+    "image": "eb11_frame_0111.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.619, 0.454), (0.621, 0.522), (0.665, 0.461), (0.663, 0.521)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0013_up",
+    "image": "eb20_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the up button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.588), (0.473, 0.838), (0.650, 0.574), (0.640, 0.814)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0013_down",
+    "image": "eb20_frame_0014.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.462, 0.659), (0.475, 0.899), (0.646, 0.645), (0.646, 0.876)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2337_up",
+    "image": "eb14_frame_0039.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.772, 0.439), (0.755, 0.640), (0.931, 0.455), (0.893, 0.674)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2337_down",
+    "image": "eb14_frame_0039.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.765, 0.496), (0.742, 0.694), (0.924, 0.524), (0.881, 0.732)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0149_up",
+    "image": "eb19_frame_0155.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.512, 0.278), (0.517, 0.502), (0.671, 0.259), (0.646, 0.480)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0149_down",
+    "image": "eb19_frame_0155.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.510, 0.351), (0.510, 0.552), (0.657, 0.329), (0.638, 0.525)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3055_up",
+    "image": "eb8_frame_0261.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.657, 0.546), (0.659, 0.619), (0.701, 0.548), (0.705, 0.621)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3055_down",
+    "image": "eb8_frame_0261.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.657, 0.567), (0.661, 0.638), (0.707, 0.567), (0.707, 0.640)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2148_up",
+    "image": "eb13_frame_0025.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.372, 0.461), (0.395, 0.685), (0.569, 0.459), (0.563, 0.692)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2148_down",
+    "image": "eb13_frame_0025.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the lower floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.385, 0.527), (0.404, 0.740), (0.575, 0.528), (0.569, 0.744)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2069_up",
+    "image": "eb12_frame_0128.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.376, 0.401), (0.399, 0.600), (0.517, 0.388), (0.527, 0.580)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2069_down",
+    "image": "eb12_frame_0128.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.383, 0.462), (0.404, 0.648), (0.519, 0.446), (0.527, 0.628)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2835_up",
+    "image": "eb17_frame_0164.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the upper floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.510, 0.413), (0.519, 0.641), (0.711, 0.418), (0.682, 0.649)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2835_down",
+    "image": "eb17_frame_0164.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.510, 0.484), (0.512, 0.691), (0.699, 0.495), (0.676, 0.699)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2770_up",
+    "image": "eb17_frame_0099.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the upper floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.730, 0.244), (0.690, 0.478), (0.937, 0.258), (0.849, 0.494)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2770_down",
+    "image": "eb17_frame_0099.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.713, 0.320), (0.680, 0.529), (0.912, 0.338), (0.832, 0.541)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0127_up",
+    "image": "eb19_frame_0128.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a higher floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.830, 0.419), (0.793, 0.644), (0.998, 0.409), (0.935, 0.632)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0127_down",
+    "image": "eb19_frame_0128.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the down button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.818, 0.489), (0.782, 0.695), (0.981, 0.476), (0.922, 0.680)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2317_up",
+    "image": "eb14_frame_0018.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPoint me to the upward button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.475, 0.394), (0.479, 0.596), (0.619, 0.414), (0.604, 0.621)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2317_down",
+    "image": "eb14_frame_0018.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.477, 0.454), (0.481, 0.641), (0.615, 0.472), (0.604, 0.666)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0082_up",
+    "image": "eb22_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.584, 0.291), (0.573, 0.511), (0.774, 0.300), (0.728, 0.520)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0082_down",
+    "image": "eb22_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.581, 0.361), (0.575, 0.556), (0.755, 0.368), (0.717, 0.571)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3119_up",
+    "image": "eb9_frame_0062.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nShow me the up button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.577, 0.556), (0.573, 0.632), (0.613, 0.555), (0.617, 0.632)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3119_down",
+    "image": "eb9_frame_0062.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the down button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.575, 0.576), (0.579, 0.649), (0.615, 0.578), (0.617, 0.652)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0056_up",
+    "image": "eb20_frame_0061.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.412, 0.286), (0.439, 0.529), (0.611, 0.267), (0.594, 0.507)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0056_down",
+    "image": "eb20_frame_0061.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the down button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.416, 0.365), (0.439, 0.580), (0.607, 0.348), (0.590, 0.556)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2261_up",
+    "image": "eb13_frame_0138.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.648, 0.244), (0.625, 0.481), (0.866, 0.247), (0.791, 0.502)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2261_down",
+    "image": "eb13_frame_0138.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.644, 0.324), (0.613, 0.536), (0.851, 0.334), (0.778, 0.547)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0082_up",
+    "image": "eb20_frame_0087.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.125, 0.449), (0.192, 0.691), (0.318, 0.428), (0.351, 0.656)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0082_down",
+    "image": "eb20_frame_0087.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the down button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.142, 0.527), (0.201, 0.749), (0.328, 0.500), (0.362, 0.709)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3028_up",
+    "image": "eb8_frame_0233.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the up button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.734, 0.432), (0.730, 0.506), (0.786, 0.429), (0.782, 0.506)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3028_down",
+    "image": "eb8_frame_0233.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.736, 0.454), (0.732, 0.527), (0.784, 0.452), (0.782, 0.524)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0129_up",
+    "image": "eb20_frame_0134.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPoint me to the upward button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.473, 0.325), (0.483, 0.569), (0.673, 0.313), (0.644, 0.545)]"
+      }
+    ]
+  },
+  {
+    "id": "eb20_frame_0129_down",
+    "image": "eb20_frame_0134.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.473, 0.408), (0.492, 0.615), (0.659, 0.387), (0.638, 0.594)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3082_up",
+    "image": "eb9_frame_0011.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.550, 0.514), (0.550, 0.585), (0.588, 0.515), (0.590, 0.588)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3082_down",
+    "image": "eb9_frame_0011.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.548, 0.534), (0.550, 0.604), (0.594, 0.533), (0.592, 0.606)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2668_up",
+    "image": "eb16_frame_0013.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.456, 0.481), (0.460, 0.698), (0.619, 0.473), (0.611, 0.682)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2668_down",
+    "image": "eb16_frame_0013.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.456, 0.549), (0.466, 0.753), (0.619, 0.535), (0.609, 0.735)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2334_up",
+    "image": "eb14_frame_0036.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a higher floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.782, 0.540), (0.772, 0.752), (0.943, 0.559), (0.918, 0.794)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2334_down",
+    "image": "eb14_frame_0036.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the down button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.774, 0.602), (0.763, 0.808), (0.935, 0.628), (0.904, 0.852)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1845_up",
+    "image": "eb11_frame_0343.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.370, 0.367), (0.374, 0.501), (0.468, 0.364), (0.468, 0.501)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1845_down",
+    "image": "eb11_frame_0343.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.370, 0.406), (0.376, 0.534), (0.471, 0.404), (0.473, 0.534)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3244_up",
+    "image": "eb9_frame_0198.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhere is the up button?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.466, 0.538), (0.471, 0.666), (0.542, 0.545), (0.552, 0.676)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3244_down",
+    "image": "eb9_frame_0198.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPoint me to the downward button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.471, 0.576), (0.473, 0.698), (0.548, 0.579), (0.550, 0.708)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2206_up",
+    "image": "eb13_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.448, 0.484), (0.466, 0.718), (0.646, 0.491), (0.640, 0.721)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2206_down",
+    "image": "eb13_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the lower floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.558), (0.464, 0.772), (0.644, 0.561), (0.634, 0.778)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2071_up",
+    "image": "eb12_frame_0130.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.496, 0.409), (0.506, 0.611), (0.650, 0.395), (0.638, 0.594)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2071_down",
+    "image": "eb12_frame_0130.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.504, 0.469), (0.508, 0.660), (0.642, 0.456), (0.634, 0.641)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2694_up",
+    "image": "eb17_frame_0023.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.431, 0.321), (0.445, 0.535), (0.625, 0.322), (0.604, 0.546)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2694_down",
+    "image": "eb17_frame_0023.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nTake me down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.443, 0.391), (0.454, 0.588), (0.617, 0.391), (0.600, 0.591)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1684_up",
+    "image": "eb11_frame_0170.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the up button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.431, 0.451), (0.445, 0.542), (0.494, 0.448), (0.500, 0.540)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1684_down",
+    "image": "eb11_frame_0170.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nShow me the down button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.435, 0.479), (0.439, 0.568), (0.494, 0.478), (0.502, 0.565)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3155_up",
+    "image": "eb9_frame_0108.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.782, 0.493), (0.778, 0.571), (0.828, 0.493), (0.826, 0.576)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3155_down",
+    "image": "eb9_frame_0108.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.784, 0.515), (0.780, 0.592), (0.830, 0.516), (0.830, 0.599)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2665_up",
+    "image": "eb16_frame_0010.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.435, 0.479), (0.448, 0.696), (0.604, 0.471), (0.604, 0.681)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2665_down",
+    "image": "eb16_frame_0010.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nLocate the down button for me\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.441, 0.546), (0.458, 0.748), (0.604, 0.533), (0.600, 0.731)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2670_up",
+    "image": "eb16_frame_0015.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.456, 0.482), (0.466, 0.696), (0.621, 0.473), (0.607, 0.678)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2670_down",
+    "image": "eb16_frame_0015.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the down button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.456, 0.549), (0.466, 0.748), (0.615, 0.531), (0.609, 0.729)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2097_up",
+    "image": "eb12_frame_0156.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.527, 0.480), (0.533, 0.698), (0.688, 0.468), (0.671, 0.676)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2097_down",
+    "image": "eb12_frame_0156.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.527, 0.544), (0.529, 0.749), (0.676, 0.531), (0.669, 0.731)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0187_up",
+    "image": "eb21_frame_0197.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the upper floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.347, 0.461), (0.379, 0.707), (0.558, 0.453), (0.548, 0.695)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0187_down",
+    "image": "eb21_frame_0197.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the lower floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.356, 0.544), (0.381, 0.761), (0.556, 0.527), (0.552, 0.749)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0116_up",
+    "image": "eb21_frame_0126.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nGoing up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.653, 0.378), (0.627, 0.616), (0.876, 0.378), (0.812, 0.622)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0116_down",
+    "image": "eb21_frame_0126.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.650, 0.456), (0.625, 0.672), (0.855, 0.451), (0.795, 0.673)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1620_up",
+    "image": "eb11_frame_0097.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.763, 0.475), (0.761, 0.547), (0.820, 0.478), (0.814, 0.548)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_1620_down",
+    "image": "eb11_frame_0097.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.768, 0.498), (0.765, 0.564), (0.820, 0.495), (0.818, 0.567)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3130_up",
+    "image": "eb9_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPoint me to the upward button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.477, 0.553), (0.479, 0.626), (0.519, 0.552), (0.523, 0.629)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_3130_down",
+    "image": "eb9_frame_0083.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPlease point to the down button\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.479, 0.574), (0.481, 0.642), (0.519, 0.575), (0.523, 0.647)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2273_up",
+    "image": "eb13_frame_0150.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.717, 0.189), (0.667, 0.439), (0.939, 0.202), (0.843, 0.455)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2273_down",
+    "image": "eb13_frame_0150.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.699, 0.269), (0.653, 0.485), (0.910, 0.282), (0.816, 0.504)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2925_up",
+    "image": "eb8_frame_0087.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.531, 0.621), (0.531, 0.681), (0.567, 0.619), (0.567, 0.680)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2925_down",
+    "image": "eb8_frame_0087.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.531, 0.639), (0.533, 0.693), (0.567, 0.638), (0.565, 0.694)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2211_up",
+    "image": "eb13_frame_0088.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHelp me go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.437, 0.432), (0.445, 0.659), (0.632, 0.439), (0.617, 0.668)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2211_down",
+    "image": "eb13_frame_0088.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.445, 0.501), (0.456, 0.714), (0.632, 0.508), (0.615, 0.721)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0157_up",
+    "image": "eb21_frame_0167.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to ascend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.389, 0.312), (0.408, 0.556), (0.598, 0.301), (0.584, 0.548)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0157_down",
+    "image": "eb21_frame_0167.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.395, 0.395), (0.418, 0.607), (0.592, 0.381), (0.586, 0.596)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2396_up",
+    "image": "eb14_frame_0098.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button should I press to go up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.671, 0.421), (0.661, 0.628), (0.826, 0.442), (0.795, 0.654)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2396_down",
+    "image": "eb14_frame_0098.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to descend a floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.665, 0.489), (0.659, 0.673), (0.820, 0.504), (0.786, 0.706)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0088_up",
+    "image": "eb21_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.638, 0.241), (0.607, 0.495), (0.876, 0.240), (0.786, 0.494)]"
+      }
+    ]
+  },
+  {
+    "id": "eb21_frame_0088_down",
+    "image": "eb21_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to descend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.630, 0.325), (0.604, 0.547), (0.843, 0.321), (0.772, 0.546)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2929_up",
+    "image": "eb8_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go to a higher floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.443, 0.618), (0.445, 0.673), (0.477, 0.615), (0.481, 0.673)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2929_down",
+    "image": "eb8_frame_0091.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nHow do I go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.443, 0.631), (0.445, 0.688), (0.479, 0.631), (0.479, 0.688)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0003_up",
+    "image": "eb22_frame_0004.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'd like to go upstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.416, 0.429), (0.433, 0.640), (0.590, 0.429), (0.579, 0.648)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0003_down",
+    "image": "eb22_frame_0004.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.418, 0.494), (0.431, 0.691), (0.588, 0.496), (0.579, 0.696)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2698_up",
+    "image": "eb17_frame_0027.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI need to go up\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.445, 0.469), (0.456, 0.687), (0.623, 0.471), (0.613, 0.691)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2698_down",
+    "image": "eb17_frame_0027.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nCan you find the button to go down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.450, 0.539), (0.460, 0.738), (0.619, 0.536), (0.611, 0.742)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0076_up",
+    "image": "eb22_frame_0077.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go to the upper floor\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.579, 0.504), (0.575, 0.720), (0.763, 0.514), (0.740, 0.734)]"
+      }
+    ]
+  },
+  {
+    "id": "eb22_frame_0076_down",
+    "image": "eb22_frame_0077.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI want to go down\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.575, 0.567), (0.577, 0.773), (0.755, 0.579), (0.732, 0.788)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2673_up",
+    "image": "eb16_frame_0018.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me up?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.456, 0.481), (0.464, 0.696), (0.619, 0.469), (0.613, 0.681)]"
+      }
+    ]
+  },
+  {
+    "id": "frame_2673_down",
+    "image": "eb16_frame_0018.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nWhich button takes me down?\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.458, 0.544), (0.471, 0.749), (0.619, 0.533), (0.613, 0.731)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0012_up",
+    "image": "eb19_frame_0013.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nPress the button to ascend\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.696, 0.508), (0.684, 0.733), (0.853, 0.495), (0.826, 0.713)]"
+      }
+    ]
+  },
+  {
+    "id": "eb19_frame_0012_down",
+    "image": "eb19_frame_0013.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<image>\nI'm heading downstairs\nYour answer should be formatted as a list of tuples, i.e. [(x1, y1), (x2, y2), ...], where each tuple contains the x and y coordinates of a point satisfying the conditions above. The coordinates should be between 0 and 1, indicating the normalized pixel locations of the points in the image."
+      },
+      {
+        "from": "gpt",
+        "value": "[(0.696, 0.573), (0.682, 0.786), (0.845, 0.560), (0.820, 0.762)]"
+      }
+    ]
+  }
+]

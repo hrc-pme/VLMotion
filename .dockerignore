@@ -1,0 +1,19 @@
+# Exclude large local caches and virtual environments from build context
+.cache/
+.venv/
+
+# VCS and editor metadata
+.git/
+.gitignore
+.mypy_cache/
+__pycache__/
+
+# Local Python cache/artifacts
+*.pyc
+*.pyo
+*.pyd
+
+# ROS build outputs (generated locally, not source)
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
