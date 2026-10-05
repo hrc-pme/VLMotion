@@ -38,7 +38,8 @@ except Exception:
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QSlider,
-    QGroupBox, QSplitter, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QMessageBox
+    QGroupBox, QSplitter, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QMessageBox,
+    QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QPixmap, QFont, QTextCursor, QImage
@@ -379,6 +380,12 @@ class ServerProcess:
         ]
         if load_4bit:
             cmd.append("--load-4bit")
+        from point.constants import vlmotion_gpu_profile_is_5060
+        if vlmotion_gpu_profile_is_5060():
+            cmd.extend([
+                '--mm-use-sam3-conditioning', 'false',
+                '--sam3-detect-buttons', 'false',
+            ])
         logger.info(f"Starting model worker: {' '.join(cmd)}")
         self.model_worker_process = subprocess.Popen(cmd)
 
@@ -435,17 +442,29 @@ class ImageLabel(QLabel):
     
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(200, 150)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("border: 2px dashed #aaa;")
         self.setAlignment(Qt.AlignCenter)
         self.setText("Waiting for camera frames…")
         self.setAcceptDrops(False)
         self.image_path = None
         self.original_image = None
+        self._last_np_rgb = None
         self.scale_factor = 1.0  # Track scaling for coordinate conversion
         # Track source frame dimensions for numpy-based frames
         self.source_w = None
         self.source_h = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            if self.original_image is not None:
+                self.load_pil(self.original_image)
+            elif self._last_np_rgb is not None:
+                self.load_rgb_np(self._last_np_rgb)
+        except Exception:
+            pass
 
     def load_pil(self, pil_image):
         self.image_path = None
@@ -474,6 +493,7 @@ class ImageLabel(QLabel):
         try:
             if np_rgb is None:
                 return
+            self._last_np_rgb = np_rgb
             h, w = np_rgb.shape[:2]
             # Update source dimensions for click mapping
             self.source_w, self.source_h = int(w), int(h)
@@ -951,7 +971,8 @@ class RoboPointMainWindow(QMainWindow):
         self.stream_group = QGroupBox("Camera Stream")
         stream_layout = QVBoxLayout(self.stream_group)
         self.image_label = ImageLabel()
-        stream_layout.addWidget(self.image_label)
+        stream_layout.addWidget(self.image_label, 1)
+        self.stream_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # Lightweight overlay toggle to draw white point without extra processing
         try:
             self.overlay_white_dot_cb = QCheckBox("Overlay white dot")
@@ -966,7 +987,7 @@ class RoboPointMainWindow(QMainWindow):
         except Exception:
             self.overlay_white_dot_cb = None
             self.white_dot_depth_label = None
-        left_layout.addWidget(self.stream_group)
+        left_layout.addWidget(self.stream_group, 1)
 
         # Parameters group (kept but hidden, so dependent code can read defaults)
         params_group = QGroupBox("Parameters")
@@ -1021,10 +1042,9 @@ class RoboPointMainWindow(QMainWindow):
         self.gripper_pitch_deg = self._make_gripper_ryp_spin(pitch0)
         self.gripper_roll_deg = self._make_gripper_ryp_spin(roll0)
         ryp_row = QHBoxLayout()
-        ryp_row.addLayout(self._make_gripper_ryp_cell('Yaw', self.gripper_yaw_deg))
-        ryp_row.addLayout(self._make_gripper_ryp_cell('Pitch', self.gripper_pitch_deg))
-        ryp_row.addLayout(self._make_gripper_ryp_cell('Roll', self.gripper_roll_deg))
-        ryp_row.addStretch()
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Yaw', self.gripper_yaw_deg), 1)
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Pitch', self.gripper_pitch_deg), 1)
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Roll', self.gripper_roll_deg), 1)
         llm_layout.addLayout(ryp_row)
         # Place buttons side-by-side
         llmrow = QHBoxLayout(); llmrow.addWidget(self.btn_start_llm); llmrow.addWidget(self.btn_stop_llm)
@@ -1085,8 +1105,14 @@ class RoboPointMainWindow(QMainWindow):
         actrow = QHBoxLayout(); self.clear_button = QPushButton("Clear Chat"); self.regenerate_button = QPushButton("Regenerate")
         actrow.addWidget(self.clear_button); actrow.addWidget(self.regenerate_button); actrow.addStretch(); right_layout.addLayout(actrow)
 
-        splitter = QSplitter(Qt.Horizontal); splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([400, 800])
-        main_layout.addWidget(splitter)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([400, 800])
+        main_layout.addWidget(splitter, 1)
+        central.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Enable manual service control by default; autostart remains off
         self.start_services_btn.setEnabled(True)
@@ -1164,7 +1190,7 @@ class RoboPointMainWindow(QMainWindow):
         spin.setSingleStep(0.5)
         spin.setDecimals(1)
         spin.setSuffix('°')
-        spin.setMaximumWidth(72)
+        spin.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         spin.setValue(float(value_deg))
         return spin
 
@@ -1172,7 +1198,7 @@ class RoboPointMainWindow(QMainWindow):
         cell = QHBoxLayout()
         cell.setSpacing(4)
         cell.addWidget(QLabel(label))
-        cell.addWidget(spin)
+        cell.addWidget(spin, 1)
         return cell
 
     def _sync_gripper_ryp_spins(self):
@@ -2356,7 +2382,8 @@ class RoboPointMainWindow(QMainWindow):
     def refresh_model_list(self):
         try:
             base = self.server_process.controller_url
-            http_timeout = 90 if os.environ.get('VLMOTION_GPU_PROFILE', '') == '5060' else 15
+            from point.constants import vlmotion_gpu_profile_is_5060
+            http_timeout = 90 if vlmotion_gpu_profile_is_5060() else 15
             ret = requests.post(f"{base}/refresh_all_workers", timeout=http_timeout)
             if ret.status_code == 200:
                 ret = requests.post(f"{base}/list_models", timeout=http_timeout)

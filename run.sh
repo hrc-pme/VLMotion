@@ -173,10 +173,34 @@ tui_run_whiptail() {
   __tui_selection=$(whiptail "$@" 3>&1 1>&2 2>&3) || __tui_exit_code=$?
 }
 
+# Visible menu rows: show every item when the terminal is tall enough; scroll only if not.
+tui_menu_list_height() {
+  local item_count=$1
+  local reserved=${2:-10}
+  local rows max
+  rows=$(tput lines 2>/dev/null || echo 24)
+  max=$((rows - reserved))
+  (( max < 1 )) && max=1
+  if (( item_count <= max )); then
+    echo "$item_count"
+  else
+    echo "$max"
+  fi
+}
+
+tui_dialog_box_height() {
+  local menu_h=$1
+  local chrome=${2:-8}
+  echo $((menu_h + chrome))
+}
+
 select_profile_tui() {
   local tui_tool=$1
   local default_profile=${2:-$(auto_detect_profile)}
   local cancel_label=${3:-Quit}
+  local n_items=3 menu_h box_h
+  menu_h=$(tui_menu_list_height "$n_items")
+  box_h=$(tui_dialog_box_height "$menu_h")
   local menu_options=(
     5060 "| GPU host / RTX 5060, CUDA 12.8"
     4060ti "| GPU host / RTX 4060 Ti, CUDA 12.1"
@@ -189,7 +213,7 @@ select_profile_tui() {
       --title " Select Device " \
       --default-item "$default_profile" \
       --cancel-label "$cancel_label" \
-      --menu "Choose device (profile):" 15 70 2 \
+      --menu "Choose device (profile):" "$box_h" 70 "$menu_h" \
       "${menu_options[@]}"
     clear
   else
@@ -198,7 +222,7 @@ select_profile_tui() {
       --title " Select Device " \
       --default-item "$default_profile" \
       --cancel-button "$cancel_label" \
-      --menu "Choose device (profile):" 15 70 2 \
+      --menu "Choose device (profile):" "$box_h" 70 "$menu_h" \
       "${menu_options[@]}"
   fi
 
@@ -242,12 +266,16 @@ select_service_tui() {
       ;;
   esac
 
+  local menu_h box_h
+  menu_h=$(tui_menu_list_height "$n_items")
+  box_h=$(tui_dialog_box_height "$menu_h")
+
   if [ "$tui_tool" = "dialog" ]; then
     tui_run_dialog \
       --backtitle "VLMotion Docker Manager" \
       --title " Select Service ($profile) " \
       --cancel-label "Back" \
-      --menu "Choose a service for $profile:" $((12 + n_items)) 72 "$n_items" \
+      --menu "Choose a service for $profile:" "$box_h" 72 "$menu_h" \
       "${menu_options[@]}"
     clear
   else
@@ -255,7 +283,7 @@ select_service_tui() {
       --backtitle "VLMotion Docker Manager" \
       --title " Select Service ($profile) " \
       --cancel-button "Back" \
-      --menu "Choose a service for $profile:" $((12 + n_items)) 72 "$n_items" \
+      --menu "Choose a service for $profile:" "$box_h" 72 "$menu_h" \
       "${menu_options[@]}"
   fi
 

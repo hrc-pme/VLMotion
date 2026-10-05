@@ -20,7 +20,12 @@ import shutil
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 import torch
 from point.model import *
-from point.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from point.constants import (
+    DEFAULT_IMAGE_PATCH_TOKEN,
+    DEFAULT_IM_START_TOKEN,
+    DEFAULT_IM_END_TOKEN,
+    vlmotion_gpu_profile_is_5060,
+)
 
 
 def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", use_flash_attn=False, **kwargs):
@@ -29,14 +34,16 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     if device != "cuda":
         kwargs['device_map'] = {"": device}
 
-    # Only docker/5060.compose.yaml sets VLMOTION_GPU_PROFILE=5060 (8GB laptop path).
-    low_vram = os.environ.get('VLMOTION_GPU_PROFILE', '').strip() == '5060'
+    low_vram = vlmotion_gpu_profile_is_5060()
+    cpu_fp16_load = False
     if load_4bit and low_vram:
         # RTX 5060-class 8GB: 4-bit LLaVA-13B does not fit with desktop VRAM use.
         print('[builder] VLMOTION_GPU_PROFILE=5060: loading fp16 on CPU (slower; frees GPU for GUI).')
         load_4bit = False
+        cpu_fp16_load = True
         kwargs['torch_dtype'] = torch.float16
-        kwargs['device_map'] = {'': 'cpu'}
+        # device_map={'': 'cpu'} triggers meta-tensor errors on recent transformers; load on CPU without sharding.
+        kwargs.pop('device_map', None)
 
     if load_8bit:
         kwargs['load_in_8bit'] = True
@@ -121,9 +128,11 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             )
         else:
             tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+            # Meta-tensor + low_cpu_mem_usage breaks on torch 2.11 when loading full fp16 on CPU (5060 path).
+            low_cpu = not cpu_fp16_load
             model = LlavaLlamaForCausalLM.from_pretrained(
                 model_path,
-                low_cpu_mem_usage=True,
+                low_cpu_mem_usage=low_cpu,
                 **kwargs
             )
 
@@ -138,8 +147,11 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     effective_device_map = kwargs.get('device_map', device_map)
     vision_tower = model.get_vision_tower()
     if not vision_tower.is_loaded:
-        vision_tower.load_model(device_map=effective_device_map)
-    if effective_device_map == {'': 'cpu'}:
+        vt_map = None if cpu_fp16_load else effective_device_map
+        vision_tower.load_model(device_map=vt_map)
+    if cpu_fp16_load:
+        vision_tower.to(device='cpu', dtype=torch.float16)
+    elif effective_device_map == {'': 'cpu'} or effective_device_map == 'cpu':
         vision_tower.to(device='cpu', dtype=torch.float16)
     elif effective_device_map != 'auto' and not isinstance(effective_device_map, dict):
         vision_tower.to(device=effective_device_map, dtype=torch.float16)

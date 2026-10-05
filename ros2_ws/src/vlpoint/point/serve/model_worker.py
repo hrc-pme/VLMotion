@@ -2,6 +2,7 @@
 A model worker executes the model.
 """
 import argparse
+import os
 import asyncio
 import contextlib
 import json
@@ -1467,6 +1468,13 @@ if __name__ == "__main__":
     parser.add_argument("--sam3-detect-dtype", type=str, default="bfloat16")
     parser.add_argument("--sam3-detections-out-path", type=str, default="/workspace/sam3_worker_candidates.jpg")
     args = parser.parse_args()
+    from point.constants import vlmotion_gpu_profile_is_5060
+    if vlmotion_gpu_profile_is_5060():
+        # 8GB laptop: keep GPU for GUI/camera; SAM3 on CUDA breaks CPU-fp16 LLaVA load path.
+        args.mm_use_sam3_conditioning = False
+        args.sam3_detect_buttons = False
+        args.mm_sam3_device = 'cpu'
+        args.sam3_detect_device = 'cpu'
     logger.info(f"args: {args}")
 
     if args.multi_modal:

@@ -115,6 +115,5 @@ services:
       VLMOTION_HF_MODEL_ID: ${VLMOTION_HF_MODEL_ID:-PME033541/vla13}
       ENABLE_BASE_MOTION: "1"
       VLMOTION_ROS_CAMERA: "1"
-      # 4060 Ti: GPU 4-bit (default builder path). Do not set VLMOTION_GPU_PROFILE=5060 here.
-      VLMOTION_GPU_PROFILE: "4060ti"
+      # GPU 4-bit default (builder.py). VLMOTION_GPU_PROFILE is 5060-only — see docker/5060.compose.yaml.
     command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]
