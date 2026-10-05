@@ -2,13 +2,15 @@
 
 set -euo pipefail
 
+compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
+
 # 用法:
 #   ./docker/run.sh [--root] [容器名稱] [ROS_DOMAIN_ID]
 #   ./docker/run.sh [--root] [ROS_DOMAIN_ID]
 # 說明:
 #   - 若第一個非 --root 的參數是數字 (0-232)，視為 ROS_DOMAIN_ID（容器名稱使用預設）
 #   - 若第一個是名稱，第二個是數字，則分別視為 容器名稱 與 ROS_DOMAIN_ID
-# 預設容器名稱: VLPoint-inference
+# 預設容器名稱: vlmotion
 
 EXEC_USER=""
 DOMAIN_ID=""
@@ -18,7 +20,7 @@ if [[ "${1-}" == "--root" ]]; then
 fi
 
 # 解析參數：支援 --root、容器名稱與數字型 ROS_DOMAIN_ID
-CONTAINER_NAME="VLPoint-inference"
+CONTAINER_NAME="vlmotion"
 
 is_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]
@@ -43,9 +45,18 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+if docker compose version >/dev/null 2>&1; then
+  compose_cmd=(docker compose -f "$compose_file")
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose_cmd=(docker-compose -f "$compose_file")
+else
+  echo "找不到 'docker compose' 或 'docker-compose'" >&2
+  exit 1
+fi
+
 # 先確保服務已啟動（若尚未建立/啟動會自動 up -d）
 echo "確保 docker compose 服務已啟動（up -d）..."
-docker compose -f docker/docker-compose.yml up -d >/dev/null
+"${compose_cmd[@]}" up -d >/dev/null
 
 # 是否存在此容器（包含已停止）
 if ! docker ps -a --format '{{.Names}}' | grep -wq "${CONTAINER_NAME}"; then
@@ -61,36 +72,35 @@ fi
 
 # 設置X11權限
 echo "設置 X11 權限..."
-# 为Docker创建一个可访问的X11认证文件
-XAUTH=/tmp/.docker.xauth
-if [ ! -f $XAUTH ]; then
-    xauth_list=$(xauth nlist $DISPLAY 2>/dev/null | sed -e 's/^..../ffff/')
-    if [ ! -z "$xauth_list" ]; then
-        echo $xauth_list | xauth -f $XAUTH nmerge -
-    else
-        touch $XAUTH
+# 先允許任何用戶連接到X11服務器（臨時解決方案）
+xhost +local: 2>/dev/null || true
+
+# 在容器內設置X11認證
+docker exec -u root "${CONTAINER_NAME}" bash -c '
+    # 創建root用戶的.Xauthority文件
+    if [ ! -f /root/.Xauthority ]; then
+        touch /root/.Xauthority
+        chmod 600 /root/.Xauthority
     fi
-    chmod a+r $XAUTH
-fi
-# 允许Docker容器连接到X11
-xhost +local:docker 2>/dev/null || true
-# 将认证文件复制到容器中
-docker cp $XAUTH "${CONTAINER_NAME}:/tmp/.docker.xauth" 2>/dev/null || true
+    
+    # 清空現有的認證並添加新的
+    xauth remove :1 2>/dev/null || true
+    echo "'"$(xauth list | grep ":1 " | head -1)"'" | xauth merge -
+' 2>/dev/null || true
 
 echo "進入容器: ${CONTAINER_NAME}"
 if [[ -n "${DOMAIN_ID}" ]]; then
-  echo "會在容器內套用 ROS_DOMAIN_ID=${DOMAIN_ID}（若 /workspace/environment.sh 存在）"
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  fi
+  RUNTIME_DOMAIN_ID="${DOMAIN_ID}"
 else
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash
-  fi
+  # 若使用者未指定，沿用容器內已設定值，最後 fallback 到 0
+  RUNTIME_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+fi
+
+echo "會在容器內自動 source /workspace/environment.sh（ROS_DOMAIN_ID=${RUNTIME_DOMAIN_ID}）"
+if [[ -n "${EXEC_USER}" ]]; then
+  exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash -lc \
+    "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${RUNTIME_DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
+else
+  exec docker exec -it "${CONTAINER_NAME}" bash -lc \
+    "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${RUNTIME_DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
 fi

@@ -63,10 +63,26 @@ models/
 *.ckpt
 *.pt
 *.safetensors
-checkpoints/
 data/
 datasets/
 
 # OS specific
 .DS_Store
 Thumbs.db
+
+wit_token.txt
+
+*.jpg
+
+!training_vlmotion_100/
+!training_vlmotion_100/images/
+!training_vlmotion_100/images/*.jpg
+
+.cache/*
+!.cache/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+checkpoints/*
+!checkpoints/.gitkeep

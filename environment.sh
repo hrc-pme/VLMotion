@@ -57,12 +57,11 @@ if [ -f "/workspace/ros2_ws/install/setup.bash" ]; then
 fi
 
 # Optionally source Stretch3 overlay if present
-if [ -f "/root/stretch3/ament_ws/install/local_setup.bash" ]; then
+STRETCH3_OVERLAY_PATH="${STRETCH3_OVERLAY_PATH:-/root/stretch3/ament_ws/install/local_setup.bash}"
+if [ -f "${STRETCH3_OVERLAY_PATH}" ]; then
   # shellcheck disable=SC1091
-  source /root/stretch3/ament_ws/install/local_setup.bash
-  echo "Sourced /root/stretch3/ament_ws/install/local_setup.bash"
-else
-  echo "File /root/stretch3/ament_ws/install/local_setup.bash not found. Skipping."
+  source "${STRETCH3_OVERLAY_PATH}"
+  echo "Sourced ${STRETCH3_OVERLAY_PATH}"
 fi
 
 # Keep SSH X11 DISPLAY as-is (localhost:10.0) to match the cookie

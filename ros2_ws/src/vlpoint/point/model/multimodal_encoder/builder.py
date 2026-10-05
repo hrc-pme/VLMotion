@@ -6,6 +6,16 @@ def build_vision_tower(vision_tower_cfg, **kwargs):
     vision_tower = getattr(vision_tower_cfg, 'mm_vision_tower', getattr(vision_tower_cfg, 'vision_tower', None))
     is_absolute_path_exists = os.path.exists(vision_tower)
     use_s2 = getattr(vision_tower_cfg, 's2', False)
+
+    vision_tower_lower = vision_tower.lower()
+    if (
+        "sam3" in vision_tower_lower
+        or "sam-3" in vision_tower_lower
+        or "segment-anything-3" in vision_tower_lower
+    ):
+        from .sam3_encoder import Sam3VisionTower
+        return Sam3VisionTower(vision_tower, args=vision_tower_cfg, **kwargs)
+
     if is_absolute_path_exists or vision_tower.startswith("openai") or vision_tower.startswith("laion") or "ShareGPT4V" in vision_tower:
         if use_s2:
             return CLIPVisionTowerS2(vision_tower, args=vision_tower_cfg, **kwargs)

@@ -1,69 +1,53 @@
 services:
-  VLPoint-inference:
+  vlmotion:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        GITHUB_TOKEN: ${GITHUB_TOKEN-}
-        ENABLE_STRETCH3: ${ENABLE_STRETCH3-0}
-        STRETCH3_REPO: ${STRETCH3_REPO-https://github.com/hello-robot/stretch3.git}
-    image: vlpoint-inference:latest
-    container_name: VLPoint-inference
-    hostname: VLPoint-dev
-    user: "0:0"
-    privileged: true
-    network_mode: host
+        INSTALL_FLASH_ATTN: ${INSTALL_FLASH_ATTN:-0}
+    image: vlmotion:latest
+    container_name: vlmotion
+    hostname: vlmotion
+    restart: unless-stopped
+    gpus: all
     environment:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
       - XDG_RUNTIME_DIR=/tmp/runtime-root
-      - XAUTHORITY=/tmp/.docker.xauth
-      # Enable real hardware inside Docker (set by default here)
-      - USE_STRETCH_HARDWARE=${USE_STRETCH_HARDWARE-1}
-      # Stretch calibration environment
-      - HELLO_FLEET_ID=stretch-se3-3092
-      # Use writable stretch_user as HELLO_FLEET_PATH so logs can be written
-      - HELLO_FLEET_PATH=/root/stretch_user
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - HF_HOME=/workspace/.cache/huggingface
+      - TRANSFORMERS_CACHE=/workspace/.cache/huggingface/transformers
+      - HF_DATASETS_CACHE=/workspace/.cache/huggingface/datasets
+      - TORCH_HOME=/workspace/.cache/torch
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - WANDB_PROJECT=${WANDB_PROJECT:-vlmotion}
+      - TORCH_DISTRIBUTED_DEBUG=${TORCH_DISTRIBUTED_DEBUG:-DETAIL}
+      - PYTHONUNBUFFERED=1
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      # Live-mount project code so changes reflect without rebuild
-      - ../ros2_ws/src/vlpoint:/workspace/ros2_ws/src/vlpoint:rw
-      - ../ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlservo:rw
-      - ../ros2_ws:/workspace/ros2_ws
-      # Mount environment script so changes reflect without rebuilding image
-      - ../environment.sh:/workspace/environment.sh:ro
-      # Mount only the fleet calibration folder read-only into HELLO_FLEET_PATH
-      - ${HOME}/stretch3/stretch-se3-3092:/root/stretch_user/stretch-se3-3092:ro
-      # Mount hello_helpers from host system for visual servoing
-      - ${HOME}/.local/lib/python3.10/site-packages/hello_helpers:/usr/local/lib/python3.10/dist-packages/hello_helpers:ro
-      # Optional: mount a local clone of stretch3 to bypass cloning in Dockerfile
-      # - ../stretch3:/root/stretch3:ro
-      - /dev:/dev
+      # - ../models:/workspace/models:ro  # 模型目錄（只讀）
+      - ../:/workspace
+      - ../.cache/huggingface:/workspace/.cache/huggingface
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw  # X11 支援（如果需要）
+      - /dev/dri:/dev/dri:rw  # GPU access for hardware acceleration
       - /dev/video0:/dev/video0:rw  # 主攝影機
       - /dev/video1:/dev/video1:rw  # 次攝影機（如果有）
       - /dev/video2:/dev/video2:rw  # 第三攝影機（如果有）
       - /dev/video3:/dev/video3:rw  # 第四攝影機（如果有）
       - /dev/video4:/dev/video4:rw  # 第五攝影機（如果有）
       - /dev/video5:/dev/video5:rw  # 第六攝影機（如果有）
-      
+    network_mode: "host"
+    shm_size: ${SHM_SIZE:-16gb}
+    privileged: true
     devices:
-      - /dev/video0:/dev/video0
+      - /dev/video0:/dev/video0  # 主攝影機
       - /dev/video1:/dev/video1  # 次攝影機（可選）
       - /dev/video2:/dev/video2  # 第三攝影機（可選）
       - /dev/video3:/dev/video3  # 第四攝影機（可選）
       - /dev/video4:/dev/video4  # 第五攝影機（可選）
       - /dev/video5:/dev/video5  # 第六攝影機（可選）
-      - /dev/video6:/dev/video6  # 第七攝影機（可選）
-      - /dev/video7:/dev/video7  # 第八攝影機（可選）
-      - /dev/video8:/dev/video8  # 第九攝影機（可選）
-      - /dev/video9:/dev/video9  # 第十攝影機（可選）
-      - /dev/video10:/dev/video10  # 第十一攝影機（可選）
-      - /dev/video11:/dev/video11  # 第十二攝影機（可選）
-      - /dev/video12:/dev/video12  # 第十三攝影機（可選）
-      - /dev/ttyUSB0:/dev/ttyUSB0
-      - /dev/ttyACM0:/dev/ttyACM0
     group_add:
-      - video 
+      - video  # 添加到 video 群組以獲得攝影機權限
     stdin_open: true
     tty: true
-    command: /bin/bash

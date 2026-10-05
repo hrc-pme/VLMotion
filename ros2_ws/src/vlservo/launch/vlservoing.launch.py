@@ -14,7 +14,7 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
     controller_url_arg = DeclareLaunchArgument(
         'controller_url',
-        default_value='http://10.0.0.1:11000',
+        default_value='http://127.0.0.1:11000',
         description='Controller URL for VLPoint server'
     )
 

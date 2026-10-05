@@ -118,6 +118,12 @@ class Conversation:
         out_aspect_ratio = out_width / out_height
         transform = np.eye(3)
         new_img = image
+        if image_process_mode in ("Original", "None"):
+            print('orig size', image.size)
+            np.set_printoptions(suppress=True)
+            print('transform')
+            print(transform)
+            return new_img.copy(), transform
         if image_process_mode == "Pad":
             background_color = (122, 116, 104)
             if aspect_ratio > out_aspect_ratio:
