@@ -11,8 +11,10 @@ VLMotion/
 ├── run.sh                         # TUI / CLI (device, then service)
 ├── .env.template
 ├── docker/
-│   ├── 4060ti.dockerfile          # CUDA 12.1 host image
+│   ├── 4060ti.dockerfile          # CUDA 12.1 host image (RTX 4060 Ti)
 │   ├── 4060ti.compose.yaml
+│   ├── 5060.dockerfile            # CUDA 12.8 host image (RTX 5060)
+│   ├── 5060.compose.yaml
 │   ├── stretch3.dockerfile        # robot image
 │   ├── stretch3.compose.yaml
 │   └── scripts/                   # Zenoh entrypoints, colcon build, GUI, bridge
@@ -41,9 +43,10 @@ Select a machine, then a service. `./run.sh` opens the TUI. The third argument i
 | Machine | Services |
 |---|---|
 | `4060ti` | `zenoh-router`, `dev`, `cb`, `vlmotion`, `build`, `stop` |
+| `5060` | same as `4060ti` (RTX 5060 / CUDA 12.8 image) |
 | `stretch3` | `dev`, `cb`, `bridge`, `build`, `stop` |
 
-`cb` runs `colcon build --symlink-install` inside the image for that machine. On the 4060ti it starts the Zenoh router first, because that container is a Zenoh client.
+`cb` runs `colcon build --symlink-install` inside the image for that machine. On GPU hosts it starts the Zenoh router first, because those containers are Zenoh clients.
 
 ```bash
 ./run.sh 4060ti build          # build the GPU image once
@@ -54,12 +57,12 @@ Select a machine, then a service. `./run.sh` opens the TUI. The third argument i
 
 ## Run
 
-On the 4060ti, allow Docker to open windows, then start the router and a GUI:
+On a GPU host (`5060` or `4060ti`; `./run.sh` auto-detects RTX 5060), allow Docker to open windows, then start the router and a GUI:
 
 ```bash
 xhost +local:docker
-./run.sh 4060ti zenoh-router
-./run.sh 4060ti vlmotion 30    # GUI; base moves after Start LLM Navigation
+./run.sh 5060 zenoh-router
+./run.sh 5060 vlmotion 30      # GUI; base moves after Start LLM Navigation
 ```
 
 On the Stretch 3, after the driver and D435i are up:
@@ -77,7 +80,7 @@ docker logs -f vlmotion-stretch3-bridge
 
 Stop a machine's containers with `./run.sh 4060ti stop` or `./run.sh stretch3 stop`.
 
-The default model is the local [PME033541/vla13](https://huggingface.co/PME033541/vla13) checkpoint at `/workspace/models/vla13` (`MODEL_PATH` in `.env`). Download it once with:
+The default model is [PME033541/vla13](https://huggingface.co/PME033541/vla13) at `/workspace/models/vla13` (`MODEL_PATH` in `.env`). The `vlmotion` service downloads it automatically if missing. To fetch manually:
 
 ```bash
 hf download PME033541/vla13 --local-dir models/vla13 --exclude "runs/*"

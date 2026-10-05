@@ -23,11 +23,13 @@ usage: $0 [profile] [service] [ros_domain_id]
 Select a device (profile) first, then a compose service available on that device.
 
 profile:
-  4060ti   — GPU host (CUDA 12.1)
+  4060ti   — GPU host (CUDA 12.1, RTX 4060 Ti class)
+  5060     — GPU host (CUDA 12.8, RTX 5060 / sm_120)
   stretch3 — robot / CPU
 
 services by profile:
   4060ti:   zenoh-router | dev | cb | vlmotion | build | stop
+  5060:     zenoh-router | dev | cb | vlmotion | build | stop
   stretch3: dev | cb | bridge | build | stop
 
 ros_domain_id:
@@ -62,7 +64,13 @@ show_error() {
 
 auto_detect_profile() {
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-    echo "4060ti"
+    local gpu_name=""
+    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
+    if [[ "$gpu_name" == *"5060"* ]]; then
+      echo "5060"
+    else
+      echo "4060ti"
+    fi
   else
     echo "stretch3"
   fi
@@ -70,9 +78,21 @@ auto_detect_profile() {
 
 is_profile() {
   case "$1" in
-    stretch3|4060ti) return 0 ;;
+    stretch3|4060ti|5060) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+is_gpu_host_compose() {
+  [[ "$1" == *4060ti* || "$1" == *5060* ]]
+}
+
+gpu_host_profile_from_compose() {
+  if [[ "$1" == *5060* ]]; then
+    echo "5060"
+  else
+    echo "4060ti"
+  fi
 }
 
 validate_profile() {
@@ -82,7 +102,7 @@ validate_profile() {
 # Space-separated list of services allowed for a profile.
 services_for_profile() {
   case "$1" in
-    4060ti)   echo "zenoh-router dev cb vlmotion build stop" ;;
+    4060ti|5060) echo "zenoh-router dev cb vlmotion build stop" ;;
     stretch3) echo "dev cb bridge build stop" ;;
     *) return 1 ;;
   esac
@@ -135,6 +155,7 @@ resolve_compose_file() {
   case "$profile" in
     stretch3) echo "$script_dir/docker/stretch3.compose.yaml" ;;
     4060ti)   echo "$script_dir/docker/4060ti.compose.yaml" ;;
+    5060)     echo "$script_dir/docker/5060.compose.yaml" ;;
   esac
 }
 
@@ -157,7 +178,8 @@ select_profile_tui() {
   local default_profile=${2:-$(auto_detect_profile)}
   local cancel_label=${3:-Quit}
   local menu_options=(
-    4060ti "| GPU host / CUDA 12.1"
+    5060 "| GPU host / RTX 5060, CUDA 12.8"
+    4060ti "| GPU host / RTX 4060 Ti, CUDA 12.1"
     stretch3 "| Robot / CPU (stretch3)"
   )
 
@@ -193,7 +215,7 @@ select_service_tui() {
   local n_items=0
 
   case "$profile" in
-    4060ti)
+    4060ti|5060)
       menu_options=(
         zenoh-router "| Zenoh router"
         dev "| Dev shell"
@@ -325,7 +347,7 @@ wait_zenoh_router() {
     fi
     sleep 0.25
   done
-  echo "[run.sh] warning: zenoh-router not accepting :${port} yet (check: docker logs vlmotion-4060ti-zenoh-router)" >&2
+  echo "[run.sh] warning: zenoh-router not accepting :${port} yet (check router container logs)" >&2
   return 0
 }
 
@@ -334,7 +356,7 @@ ensure_zenoh_router() {
   local project_name=$1
   local compose_file=$2
 
-  if [[ "$compose_file" != *4060ti* ]]; then
+  if ! is_gpu_host_compose "$compose_file"; then
     return 0
   fi
   compose_recreate "$project_name" "$compose_file" zenoh-router
@@ -374,10 +396,12 @@ start_host_gui() {
 
   ensure_x11_for_docker
   ensure_zenoh_router "$project_name" "$compose_file"
+  local gpu_profile
+  gpu_profile=$(gpu_host_profile_from_compose "$compose_file")
   compose_recreate "$project_name" "$compose_file" "$service"
-  echo "[run.sh] ${service} running in background (container: vlmotion-4060ti-${service})"
-  echo "[run.sh] logs: docker logs -f vlmotion-4060ti-${service}"
-  echo "[run.sh] stop:  ./run.sh 4060ti stop"
+  echo "[run.sh] ${service} running in background (container: vlmotion-${gpu_profile}-${service})"
+  echo "[run.sh] logs: docker logs -f vlmotion-${gpu_profile}-${service}"
+  echo "[run.sh] stop:  ./run.sh ${gpu_profile} stop"
 }
 
 start_bridge() {
@@ -395,16 +419,18 @@ start_zenoh_router() {
   local project_name=$1
   local compose_file=$2
 
+  local gpu_profile
+  gpu_profile=$(gpu_host_profile_from_compose "$compose_file")
   compose_recreate "$project_name" "$compose_file" zenoh-router
   wait_zenoh_router
-  echo "zenoh-router is running (container: vlmotion-4060ti-zenoh-router, ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0})"
+  echo "zenoh-router is running (container: vlmotion-${gpu_profile}-zenoh-router, ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0})"
 }
 
 build_image() {
   local project_name=$1
   local compose_file=$2
 
-  if [[ "$compose_file" == *4060ti* ]]; then
+  if is_gpu_host_compose "$compose_file"; then
     compose_cmd "$project_name" "$compose_file" build dev zenoh-router
   else
     compose_cmd "$project_name" "$compose_file" build dev

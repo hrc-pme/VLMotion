@@ -1,0 +1,17 @@
+# Host (RTX 5060) Python deps for the VLMotion GUI and RoboPoint worker.
+# Torch/CUDA is installed by the Dockerfile before this file.
+transformers==4.37.2
+tokenizers==0.15.2
+accelerate
+bitsandbytes
+peft
+einops
+sentencepiece
+protobuf
+shortuuid
+markdown2
+requests
+pillow
+pyzmq
+numpy
+opencv-python-headless

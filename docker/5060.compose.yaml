@@ -1,7 +1,8 @@
 ################################################################################
-# VLMotion - GPU host (4060 Ti / CUDA 12.1)
+# VLMotion - GPU host (RTX 5060 / CUDA 12.8)
 #
-# Zenoh topology matches StreamVLN:
+# Zenoh settings match docker/4060ti.compose.yaml (same env, run-router.sh, entrypoint-4060ti.sh).
+# Same topology:
 #   zenoh-router  — sole rmw_zenohd (listen 0.0.0.0:7447)
 #   dev/cb/vlmotion — clients → 127.0.0.1:7447
 #   stretch3      — clients → ZENOH_ROUTER_HOST:7447
@@ -17,8 +18,8 @@ x-zenoh-client-env: &zenoh_client_env
 x-common-settings: &common
   build:
     context: ..
-    dockerfile: docker/4060ti.dockerfile
-  image: vlmotion:4060ti-dev
+    dockerfile: docker/5060.dockerfile
+  image: vlmotion:5060-dev
 
   volumes:
     - "/etc/localtime:/etc/localtime:ro"
@@ -59,9 +60,9 @@ services:
   zenoh-router:
     build:
       context: ..
-      dockerfile: docker/4060ti.dockerfile
-    image: vlmotion:4060ti-dev
-    container_name: vlmotion-4060ti-zenoh-router
+      dockerfile: docker/5060.dockerfile
+    image: vlmotion:5060-dev
+    container_name: vlmotion-5060-zenoh-router
     volumes:
       - "/etc/localtime:/etc/localtime:ro"
       - "..:/workspace"
@@ -83,14 +84,14 @@ services:
 
   dev:
     <<: *common
-    container_name: vlmotion-4060ti-dev
+    container_name: vlmotion-5060-dev
     depends_on:
       - zenoh-router
     command: ["/bin/bash"]
 
   cb:
     <<: *common
-    container_name: vlmotion-4060ti-cb
+    container_name: vlmotion-5060-cb
     depends_on:
       - zenoh-router
     command: ["bash", "docker/scripts/colcon_build.sh"]
@@ -98,7 +99,7 @@ services:
   # GUI + model. Base stays still until Start LLM Navigation.
   vlmotion:
     <<: *common
-    container_name: vlmotion-4060ti-vlmotion
+    container_name: vlmotion-5060-vlmotion
     depends_on:
       - zenoh-router
     environment:

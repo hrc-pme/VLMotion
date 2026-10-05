@@ -9,7 +9,7 @@
 # Prerequisites on the robot, outside this container:
 #   hellorobot driver + d435i, both on the same Zenoh router / ROS_DOMAIN_ID
 # Host:
-#   ./run.sh 4060ti zenoh-router
+#   ./run.sh 4060ti zenoh-router   # or ./run.sh 5060 zenoh-router on the GPU host
 #   ./run.sh 4060ti vlmotion 30
 #
 # Publishes /stretch/cmd_vel only while enable_base_motion is true and the
@@ -38,7 +38,7 @@ ZENOH_HOST="${ZENOH_ROUTER_HOST:-$(zenoh_router_host)}"
 ZENOH_PORT="${ZENOH_ROUTER_PORT:-$(zenoh_router_port)}"
 if ! zenoh_wait_for_router "${ZENOH_HOST}" "${ZENOH_PORT}" 120; then
   echo "[run_robot_bridge] error: Zenoh router not reachable at ${ZENOH_HOST}:${ZENOH_PORT}" >&2
-  echo "[run_robot_bridge] start host router: ./run.sh 4060ti zenoh-router" >&2
+  echo "[run_robot_bridge] start GPU host router: $(zenoh_gpu_host_router_hint)" >&2
   exit 1
 fi
 

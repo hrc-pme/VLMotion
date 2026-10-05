@@ -39,6 +39,10 @@ set -u
 export ENABLE_BASE_MOTION="${ENABLE_BASE_MOTION:-0}"
 export VLMOTION_ROS_CAMERA=1
 export MODEL_PATH="${MODEL_PATH:-/workspace/models/vla13}"
+export VLMOTION_HF_MODEL_ID="${VLMOTION_HF_MODEL_ID:-PME033541/vla13}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${SCRIPT_DIR}/ensure_vlmotion_model.sh"
 
 echo "[run_host_gui] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}"
 echo "[run_host_gui] RMW=${RMW_IMPLEMENTATION:-}"

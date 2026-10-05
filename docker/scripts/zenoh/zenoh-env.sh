@@ -24,6 +24,11 @@ zenoh_remote_client_endpoint() {
   echo "$(zenoh_router_host):$(zenoh_router_port)"
 }
 
+# Help text: GPU host runs one zenoh-router (4060ti or 5060 compose profile, same Zenoh env).
+zenoh_gpu_host_router_hint() {
+  echo "./run.sh 4060ti zenoh-router  or  ./run.sh 5060 zenoh-router  (one router on the GPU host)"
+}
+
 zenoh_source_ros() {
   if [ -f /opt/ros/humble/setup.bash ]; then
     local _nounset_was_on=0
