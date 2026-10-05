@@ -71,6 +71,9 @@ GRASP_MAX_DEPTH_M = float(os.environ.get('VLMOTION_GRASP_MAX_DEPTH_M', '0.7'))
 GRASP_ARM_DEPTH_OFFSET_M = float(os.environ.get('VLMOTION_GRASP_ARM_DEPTH_OFFSET_M', '0.15'))
 GRASP_CENTER_FRAC = 0.05
 GRASP_GRIPPER_CLOSED = 0.0
+START_ARM_M = float(os.environ.get('VLMOTION_START_ARM_M', '0.01'))
+START_LIFT_M = float(os.environ.get('VLMOTION_START_LIFT_M', '0.7'))
+START_GRIPPER_FINGER = float(os.environ.get('VLMOTION_START_GRIPPER_FINGER', '0.085'))
 
 
 def _robust_depth(samples):
@@ -140,6 +143,10 @@ class RosLink(QObject):
         self._gripper_cam_aligned = False
         self._color_decode_warned = False
         self._head_align_disabled_logged = False
+        self._reset_wanted = False
+        self._reset_phase = 'idle'
+        self._reset_future = None
+        self._reset_target = None
 
     def start(self):
         if not self.enabled or self.node is not None:
@@ -307,6 +314,47 @@ class RosLink(QObject):
         self._grasp_depth_m = None
         self._grasp_extend_target_m = None
 
+    def reset_arm_position(self):
+        """Move arm/lift/wrist to the nominal post-calibration start pose."""
+        self.stop_grasp()
+        self._align_wanted = False
+        self._align_phase = 'idle'
+        self._align_future = None
+        self._reset_target = self._build_start_qpos()
+        self._reset_wanted = True
+        self._reset_phase = 'idle'
+        self._reset_future = None
+
+    def _build_start_qpos(self):
+        qpos = self._qpos_hold()
+        if qpos is None:
+            return None
+        from .stretch3_tf_grasp import _gripper_nominal_wrist_from_bias
+
+        qpos = list(qpos)
+        qpos[0] = START_ARM_M
+        qpos[1] = START_LIFT_M
+        qpos = _gripper_nominal_wrist_from_bias(qpos)
+        qpos[7] = START_GRIPPER_FINGER
+        qpos[8] = 0.0
+        qpos[9] = 0.0
+        return qpos
+
+    @staticmethod
+    def _near_start_pose(current: list, target: list) -> bool:
+        if current is None or target is None:
+            return False
+        if abs(current[0] - target[0]) > 0.015:
+            return False
+        if abs(current[1] - target[1]) > 0.02:
+            return False
+        for idx in (2, 3, 4):
+            if abs(current[idx] - target[idx]) > 0.04:
+                return False
+        if abs(current[7] - target[7]) > 0.03:
+            return False
+        return True
+
     def grasp_depth_blocked(self, px: int, py: int) -> bool:
         """True when white-point depth is known and beyond the grasp range."""
         z_m = self.depth_meters(int(px), int(py))
@@ -401,6 +449,10 @@ class RosLink(QObject):
         return client.call_async(Trigger.Request())
 
     def _grasp_tick(self):
+        if self._reset_wanted:
+            self._reset_tick()
+            if self._reset_wanted:
+                return
         if self._align_wanted:
             self._align_tick()
         phase = self._grasp_phase
@@ -454,6 +506,79 @@ class RosLink(QObject):
             return
         if phase == 'run':
             self._publish_grasp_pose()
+
+    def _reset_tick(self):
+        phase = self._reset_phase
+        future = self._reset_future
+        target = self._reset_target
+        if target is None:
+            target = self._build_start_qpos()
+            self._reset_target = target
+        if target is None:
+            return
+        if phase == 'idle':
+            pending = self._call_trigger(self._pos_client)
+            if pending is None:
+                return
+            self._reset_future = pending
+            self._reset_phase = 'to_position'
+            return
+        if phase == 'to_position':
+            if future is None or not future.done():
+                return
+            pending = self._call_trigger(self._act_client)
+            if pending is None:
+                return
+            self._reset_future = pending
+            self._reset_phase = 'to_stream'
+            return
+        if phase == 'to_stream':
+            if future is not None and not future.done():
+                return
+            self._reset_future = None
+            self._reset_phase = 'run'
+            if self.node is not None:
+                self.node.get_logger().info('reset arm: streaming to start pose')
+            return
+        if phase == 'run':
+            qpos = self._qpos_hold()
+            if qpos is None:
+                return
+            cmd = list(target)
+            step = 0.02
+            for idx in (0, 1):
+                cmd[idx] = qpos[idx] + max(-step, min(step, target[idx] - qpos[idx]))
+            wrist_step = 0.015
+            for idx in (2, 3, 4):
+                cmd[idx] = qpos[idx] + max(-wrist_step, min(wrist_step, target[idx] - qpos[idx]))
+            cmd[7] = qpos[7] + max(-0.02, min(0.02, target[7] - qpos[7]))
+            cmd[8] = 0.0
+            cmd[9] = 0.0
+            self._publish_qpos(cmd)
+            if self._near_start_pose(qpos, target):
+                self._reset_wanted = False
+                self._reset_phase = 'idle'
+                self._reset_target = None
+                self.status_changed.emit('Reset arm pos: at start pose')
+                pending = self._call_trigger(self._deact_client)
+                if pending is not None:
+                    self._reset_future = pending
+                    self._reset_phase = 'to_deact'
+            return
+        if phase == 'to_deact':
+            if future is None or not future.done():
+                return
+            pending = self._call_trigger(self._nav_client)
+            if pending is None:
+                return
+            self._reset_future = pending
+            self._reset_phase = 'to_nav'
+            return
+        if phase == 'to_nav':
+            if future is not None and not future.done():
+                return
+            self._reset_future = None
+            self._reset_phase = 'idle'
 
     def _align_tick(self):
         from .stretch3_tf_grasp import (

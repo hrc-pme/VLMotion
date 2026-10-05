@@ -995,19 +995,21 @@ class RoboPointMainWindow(QMainWindow):
         # Prepare buttons but do not add to layout (no buttons requested)
         self.start_services_btn = QPushButton("Start Services"); self.stop_services_btn = QPushButton("Stop Services")
 
-        # Camera control
-        sender_group = QGroupBox("Camera")
-        sender_layout = QVBoxLayout(sender_group)
-        row1 = QHBoxLayout(); row1.addWidget(QLabel("Camera:"))
-        self.camera_selector = QComboBox(); self.camera_selector.addItems(["top camera", "head camera", "gripper camera"]) ; row1.addWidget(self.camera_selector)
-        sender_layout.addLayout(row1)
-        left_layout.addWidget(sender_group)
+        camera_group = QGroupBox("Camera Options")
+        camera_layout = QVBoxLayout(camera_group)
+        row1 = QHBoxLayout()
+        self.camera_selector = QComboBox()
+        self.camera_selector.addItems(["top camera", "head camera", "gripper camera"])
+        row1.addWidget(self.camera_selector)
+        camera_layout.addLayout(row1)
+        left_layout.addWidget(camera_group)
 
         # LLM Grasping controls (white-point -> 3D -> publish)
         llm_group = QGroupBox("LLM Grasping (select gripper cam required)")
         llm_layout = QVBoxLayout(llm_group)
         self.btn_start_llm = QPushButton("Start LLM Grasping"); self.btn_stop_llm = QPushButton("Stop LLM Grasping"); self.btn_stop_llm.setEnabled(False)
         self.btn_clean_llm = QPushButton("Clean Points")
+        self.btn_reset_arm = QPushButton("Reset Arm Pos")
         self.llm_status = QLabel("LLM Grasping: select gripper camera, then Start")
         # Add a dedicated checkbox for LLM flow to avoid confusion
         self.manage_llm_demo_checkbox = QCheckBox("Manage Visual Servoing process")
@@ -1027,7 +1029,10 @@ class RoboPointMainWindow(QMainWindow):
         # Place buttons side-by-side
         llmrow = QHBoxLayout(); llmrow.addWidget(self.btn_start_llm); llmrow.addWidget(self.btn_stop_llm)
         llm_layout.addLayout(llmrow)
-        llm_layout.addWidget(self.btn_clean_llm)
+        clean_row = QHBoxLayout()
+        clean_row.addWidget(self.btn_clean_llm)
+        clean_row.addWidget(self.btn_reset_arm)
+        llm_layout.addLayout(clean_row)
         llm_layout.addWidget(self.llm_status)
         llm_layout.addWidget(self.manage_llm_demo_checkbox)
         left_layout.addWidget(llm_group)
@@ -1102,6 +1107,7 @@ class RoboPointMainWindow(QMainWindow):
         self.btn_start_llm.clicked.connect(self.start_llm_grasping)
         self.btn_stop_llm.clicked.connect(self.stop_llm_grasping)
         self.btn_clean_llm.clicked.connect(self.clean_llm_points)
+        self.btn_reset_arm.clicked.connect(self.reset_arm_pos)
         # Navigation buttons
         self.nav_start_btn.clicked.connect(self.start_llm_navigation)
         self.nav_stop_btn.clicked.connect(self.stop_llm_navigation)
@@ -1898,6 +1904,37 @@ class RoboPointMainWindow(QMainWindow):
         clusters.sort(key=lambda c: -len(c))
         return clusters
 
+    def reset_arm_pos(self):
+        """Return the arm to the nominal post-calibration start pose."""
+        try:
+            if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+                link = self._ensure_ros_link()
+                link.start()
+                link.reset_arm_position()
+                self.llm_status.setText("Reset arm pos: moving to start pose…")
+                return
+            if self.llm_session_active:
+                try:
+                    self.white_point_proc.stop()
+                except Exception:
+                    pass
+            if self.manage_llm_demo_checkbox.isChecked():
+                try:
+                    if self.visual_servo_proc.proc and self.visual_servo_proc.proc.poll() is None:
+                        self.visual_servo_proc.stop()
+                        time.sleep(0.2)
+                except Exception:
+                    pass
+                self.visual_servo_proc.start(use_remote=self.use_remote_yolo)
+            else:
+                from VLServo.pose_utils import go_to_start_pose
+
+                go_to_start_pose(head_tilt_deg=float(self.head_tilt_deg.value()))
+            self.llm_status.setText("Reset arm pos: at start pose")
+        except Exception as e:
+            logger.error(f"Failed to reset arm position: {e}")
+            self.llm_status.setText("Reset arm pos: failed")
+
     def clean_llm_points(self):
         """Clear annotated white points and reset tracking without popups."""
         try:
@@ -2073,6 +2110,9 @@ class RoboPointMainWindow(QMainWindow):
 
     def _on_ros_link_status(self, text: str):
         lower = text.lower()
+        if text.startswith('Reset arm pos:'):
+            self.llm_status.setText(text)
+            return
         if '无法 grasping' in text:
             self.llm_session_active = False
             self.llm_status.setText(text)
