@@ -2,6 +2,7 @@
 # VLMotion - GPU host (RTX 5060 / CUDA 12.8)
 #
 # Zenoh settings match docker/4060ti.compose.yaml (same env, run-router.sh, entrypoint-4060ti.sh).
+# vlmotion-only: VLMOTION_GPU_PROFILE=5060 enables CPU fp16 model load (4060ti keeps GPU 4-bit).
 # Same topology:
 #   zenoh-router  — sole rmw_zenohd (listen 0.0.0.0:7447)
 #   dev/cb/vlmotion — clients → 127.0.0.1:7447
@@ -116,4 +117,7 @@ services:
       VLMOTION_HF_MODEL_ID: ${VLMOTION_HF_MODEL_ID:-PME033541/vla13}
       ENABLE_BASE_MOTION: "1"
       VLMOTION_ROS_CAMERA: "1"
+      # 5060-only: 8GB VRAM → CPU fp16 model + longer GUI poll (see builder.py / vlservoing.py).
+      VLMOTION_GPU_PROFILE: "5060"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]

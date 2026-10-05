@@ -62,6 +62,8 @@ class ModelWorker:
 
         self.device = device
         logger.info(f"Loading the model {self.model_name} on worker {worker_id} ...")
+        if (load_4bit or load_8bit) and torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(
             model_path, model_base, self.model_name, load_8bit, load_4bit, device=self.device, use_flash_attn=use_flash_attn)
 

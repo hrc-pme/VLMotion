@@ -115,4 +115,6 @@ services:
       VLMOTION_HF_MODEL_ID: ${VLMOTION_HF_MODEL_ID:-PME033541/vla13}
       ENABLE_BASE_MOTION: "1"
       VLMOTION_ROS_CAMERA: "1"
+      # 4060 Ti: GPU 4-bit (default builder path). Do not set VLMOTION_GPU_PROFILE=5060 here.
+      VLMOTION_GPU_PROFILE: "4060ti"
     command: ["bash", "/workspace/docker/scripts/run_host_gui.sh"]

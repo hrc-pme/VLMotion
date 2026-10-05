@@ -29,17 +29,26 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     if device != "cuda":
         kwargs['device_map'] = {"": device}
 
+    # Only docker/5060.compose.yaml sets VLMOTION_GPU_PROFILE=5060 (8GB laptop path).
+    low_vram = os.environ.get('VLMOTION_GPU_PROFILE', '').strip() == '5060'
+    if load_4bit and low_vram:
+        # RTX 5060-class 8GB: 4-bit LLaVA-13B does not fit with desktop VRAM use.
+        print('[builder] VLMOTION_GPU_PROFILE=5060: loading fp16 on CPU (slower; frees GPU for GUI).')
+        load_4bit = False
+        kwargs['torch_dtype'] = torch.float16
+        kwargs['device_map'] = {'': 'cpu'}
+
     if load_8bit:
         kwargs['load_in_8bit'] = True
     elif load_4bit:
-        # Use only quantization_config for 4-bit; do not also pass load_in_4bit
         kwargs['quantization_config'] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.float16,
             bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type='nf4'
+            bnb_4bit_quant_type='nf4',
         )
-    else:
+        kwargs['device_map'] = {'': 0}
+    elif 'torch_dtype' not in kwargs:
         kwargs['torch_dtype'] = torch.float16
 
     if use_flash_attn:
@@ -126,11 +135,14 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
         tokenizer.add_tokens([DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN], special_tokens=True)
     model.resize_token_embeddings(len(tokenizer))
 
+    effective_device_map = kwargs.get('device_map', device_map)
     vision_tower = model.get_vision_tower()
     if not vision_tower.is_loaded:
-        vision_tower.load_model(device_map=device_map)
-    if device_map != 'auto':
-        vision_tower.to(device=device_map, dtype=torch.float16)
+        vision_tower.load_model(device_map=effective_device_map)
+    if effective_device_map == {'': 'cpu'}:
+        vision_tower.to(device='cpu', dtype=torch.float16)
+    elif effective_device_map != 'auto' and not isinstance(effective_device_map, dict):
+        vision_tower.to(device=effective_device_map, dtype=torch.float16)
     image_processor = vision_tower.image_processor
 
     if hasattr(model.config, "max_sequence_length"):

@@ -2171,6 +2171,10 @@ class RoboPointMainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start services: {e}")
 
+    def _model_worker_running(self):
+        proc = self.server_process.model_worker_process
+        return proc is not None and proc.poll() is None
+
     def _start_model_refresh(self):
         """Keep asking the controller until the worker has registered."""
         timer = getattr(self, "_model_refresh_timer", None)
@@ -2179,8 +2183,10 @@ class RoboPointMainWindow(QMainWindow):
             timer.timeout.connect(self.refresh_model_list)
             self._model_refresh_timer = timer
         if not timer.isActive():
-            timer.start(5000)
-        QTimer.singleShot(3000, self.refresh_model_list)
+            # CPU load on 5060 can take ~1–2 min before list_models shows vla13.
+            timer.start(2000)
+        for delay_ms in (1000, 3000, 8000, 15000, 30000, 45000, 60000):
+            QTimer.singleShot(delay_ms, self.refresh_model_list)
 
     def stop_services(self):
         timer = getattr(self, "_model_refresh_timer", None)
@@ -2275,9 +2281,19 @@ class RoboPointMainWindow(QMainWindow):
         """Poll lightweight status with very short timeouts to avoid UI stalls."""
         ctrl_status = "Not Running"
         try:
-            response = requests.post(f"{self.server_process.controller_url}/list_models", timeout=0.2)
+            response = requests.post(
+                f"{self.server_process.controller_url}/list_models", timeout=2.0)
             if response.status_code == 200:
                 ctrl_status = "Running"
+                models = response.json().get("models", [])
+                if models:
+                    self.models = models
+                    try:
+                        if self.model_selector.count() == 0 or self.model_selector.currentText() not in models:
+                            self.model_selector.clear()
+                            self.model_selector.addItems(models)
+                    except Exception:
+                        pass
             else:
                 ctrl_status = "Error"
         except Exception:
@@ -2285,7 +2301,12 @@ class RoboPointMainWindow(QMainWindow):
                 ctrl_status = "Starting..."
             else:
                 ctrl_status = "Not Running"
-        worker_status = "Running" if len(self.models) > 0 else "No Models"
+        if len(self.models) > 0:
+            worker_status = "Running"
+        elif self._model_worker_running():
+            worker_status = "Loading model..."
+        else:
+            worker_status = "No Models"
         try:
             self.service_status.setText(f"Controller: {ctrl_status} | Model Worker: {worker_status}")
         except Exception:
@@ -2295,11 +2316,25 @@ class RoboPointMainWindow(QMainWindow):
     def refresh_model_list(self):
         try:
             base = self.server_process.controller_url
-            ret = requests.post(f"{base}/refresh_all_workers", timeout=5)
+            http_timeout = 90 if os.environ.get('VLMOTION_GPU_PROFILE', '') == '5060' else 15
+            ret = requests.post(f"{base}/refresh_all_workers", timeout=http_timeout)
             if ret.status_code == 200:
-                ret = requests.post(f"{base}/list_models", timeout=5)
+                ret = requests.post(f"{base}/list_models", timeout=http_timeout)
                 if ret.status_code == 200:
                     self.models = ret.json().get("models", [])
+                    if not self.models and self._model_worker_running():
+                        try:
+                            current = getattr(self, 'service_status', None)
+                            ctrl_str = "Controller: Running"
+                            if current is not None and current.text():
+                                parts = current.text().split('|')
+                                if parts:
+                                    ctrl_str = parts[0].strip()
+                            self.service_status.setText(
+                                f"{ctrl_str} | Model Worker: Loading model... (CPU load may take 1–2 min)")
+                        except Exception:
+                            pass
+                        return
                     # Populate selector if available
                     try:
                         self.model_selector.clear()
