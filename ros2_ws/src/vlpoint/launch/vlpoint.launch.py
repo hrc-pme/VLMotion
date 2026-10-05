@@ -63,7 +63,7 @@ def generate_launch_description():
         DeclareLaunchArgument('worker_port', default_value='22000'),
         DeclareLaunchArgument('controller_address', default_value='http://10.0.0.1:11000'),
         DeclareLaunchArgument('worker_address', default_value='http://10.0.0.1:22000'),
-        DeclareLaunchArgument('model_path', default_value='wentao-yuan/robopoint-v1-vicuna-v1.5-13b'),
+        DeclareLaunchArgument('model_path', default_value='/workspace/models/vla13'),
         DeclareLaunchArgument('device', default_value='cuda'),
         DeclareLaunchArgument('limit_model_concurrency', default_value='5'),
         DeclareLaunchArgument('stream_interval', default_value='1'),

@@ -256,7 +256,7 @@ if __name__ == "__main__":
         default="http://10.0.0.1:22000")
     parser.add_argument("--controller-address", type=str,
         default="http://10.0.0.1:11000")
-    parser.add_argument("--model-path", type=str, default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b")
+    parser.add_argument("--model-path", type=str, default="/workspace/models/vla13")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--model-name", type=str)
     parser.add_argument("--device", type=str, default="cuda")

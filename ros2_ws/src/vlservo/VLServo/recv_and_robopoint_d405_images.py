@@ -228,7 +228,7 @@ class ServerProcess:
         
     def start_model_worker(self, host="0.0.0.0", controller_url="http://localhost:10000", 
                           port=20000, worker_url="http://localhost:20000",
-                          model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True):
+                          model_path="/workspace/models/vla13", load_4bit=True):
         """Start the model worker process"""
         # Note: model_worker.py expects --controller-address and --worker-address
         cmd = [
@@ -707,7 +707,7 @@ class RoboPointMainWindow(QMainWindow):
     # Payload is a dict with keys: 'pixel' (u,v), 'depth_m', 'camera_xyz'
     tennis_target_detected = pyqtSignal(dict)
 
-    def __init__(self, controller_url=None, autostart=True, model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True, use_remote_d405=False):
+    def __init__(self, controller_url=None, autostart=True, model_path="/workspace/models/vla13", load_4bit=True, use_remote_d405=False):
         super().__init__()
         self.setWindowTitle("RoboPoint - Vision-Language Model for Spatial Affordance Prediction")
         self.setGeometry(100, 100, 1200, 800)
@@ -1561,7 +1561,7 @@ def main():
     parser.add_argument("--controller-url", type=str, default="http://localhost:10000",
                        help="Controller URL")
     parser.add_argument("--model-path", type=str, 
-                       default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b",
+                       default="/workspace/models/vla13",
                        help="Model path")
     parser.add_argument("--load-4bit", action="store_true", default=True,
                        help="Load model in 4-bit mode")

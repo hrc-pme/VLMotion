@@ -484,7 +484,7 @@ class ServerProcess:
 
     def start_model_worker(self, host="0.0.0.0", controller_url="http://10.0.0.1:11000",
                            port=22000, worker_url="http://10.0.0.1:22000",
-                           model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True):
+                           model_path="/workspace/models/vla13", load_4bit=True):
         cmd = [
             sys.executable, "-m", "point.serve.model_worker",
             "--host", host,
@@ -979,7 +979,7 @@ class DirectCameraThread(QThread):
 
 
 class RoboPointMainWindow(QMainWindow):
-    def __init__(self, controller_url=None, autostart=False, model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b",
+    def __init__(self, controller_url=None, autostart=False, model_path="/workspace/models/vla13",
                  load_4bit=True, use_remote_stream=False):
         super().__init__()
         self.setWindowTitle("RoboPoint - Visual Servoing")
@@ -2899,7 +2899,7 @@ class RoboPointMainWindow(QMainWindow):
 def main():
     parser = argparse.ArgumentParser(description="RoboPoint Visual Servoing GUI")
     parser.add_argument("--controller-url", type=str, default="http://10.0.0.1:11000", help="Controller URL")
-    parser.add_argument("--model-path", type=str, default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", help="Model path")
+    parser.add_argument("--model-path", type=str, default="/workspace/models/vla13", help="Model path")
     parser.add_argument("--load-4bit", action="store_true", default=True, help="Load model in 4-bit mode")
     parser.add_argument('-r', '--remote', action='store_true', help='Receive camera images from a remote robot (subscribe to robot IP).')
     args = parser.parse_args()

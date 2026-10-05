@@ -67,6 +67,11 @@ _DEPTH_OFFSETS = (
 _DEPTH_GAP_M = 0.30
 _DEPTH_MIN_SAMPLES = 3
 
+GRASP_MAX_DEPTH_M = float(os.environ.get('VLMOTION_GRASP_MAX_DEPTH_M', '0.7'))
+GRASP_ARM_DEPTH_OFFSET_M = float(os.environ.get('VLMOTION_GRASP_ARM_DEPTH_OFFSET_M', '0.15'))
+GRASP_CENTER_FRAC = 0.05
+GRASP_GRIPPER_CLOSED = 0.0
+
 
 def _robust_depth(samples):
     ordered = sorted(z for z in samples if z is not None and z > 0.0)
@@ -121,6 +126,9 @@ class RosLink(QObject):
         self._grasp_px = None
         self._grasp_py = None
         self._grasp_log_t = 0.0
+        self._grasp_motion = 'idle'
+        self._grasp_depth_m = None
+        self._grasp_extend_target_m = None
         self._tf = None
         self._camera_info = None
         self._camera_info_sub = None
@@ -131,6 +139,7 @@ class RosLink(QObject):
         self._align_role = None
         self._gripper_cam_aligned = False
         self._color_decode_warned = False
+        self._head_align_disabled_logged = False
 
     def start(self):
         if not self.enabled or self.node is not None:
@@ -196,6 +205,10 @@ class RosLink(QObject):
             CompressedImage, topics['depth'], self._on_depth, _sensor_qos(),
         )
         if name == GRIPPER_CAMERA:
+            if self._align_role == 'head' and self._align_wanted:
+                self._align_wanted = False
+                self._align_phase = 'idle'
+                self._align_future = None
             from sensor_msgs.msg import CameraInfo
 
             info_topic = os.environ.get(
@@ -277,6 +290,9 @@ class RosLink(QObject):
     def start_grasp(self, px, py):
         self._grasp_px = None if px is None else int(px)
         self._grasp_py = None if py is None else int(py)
+        self._grasp_motion = 'idle'
+        self._grasp_depth_m = None
+        self._grasp_extend_target_m = None
         self._grasp_wanted = True
 
     def update_grasp_pixel(self, px, py):
@@ -287,14 +303,27 @@ class RosLink(QObject):
 
     def stop_grasp(self):
         self._grasp_wanted = False
+        self._grasp_motion = 'idle'
+        self._grasp_depth_m = None
+        self._grasp_extend_target_m = None
+
+    def grasp_depth_blocked(self, px: int, py: int) -> bool:
+        """True when white-point depth is known and beyond the grasp range."""
+        z_m = self.depth_meters(int(px), int(py))
+        return z_m is not None and z_m > GRASP_MAX_DEPTH_M
 
     def is_gripper_cam_aligned(self) -> bool:
         return bool(self._gripper_cam_aligned)
 
     def _begin_cam_alignment(self, role: str):
-        if role == 'gripper' and self._camera != GRIPPER_CAMERA:
+        if role == 'head':
+            if self.node is not None and not self._head_align_disabled_logged:
+                self._head_align_disabled_logged = True
+                self.node.get_logger().info(
+                    'head cam alignment disabled; head joints are not commanded'
+                )
             return
-        if role == 'head' and self._camera != HEAD_CAMERA:
+        if role == 'gripper' and self._camera != GRIPPER_CAMERA:
             return
         self._align_role = role
         self._align_wanted = True
@@ -305,12 +334,35 @@ class RosLink(QObject):
             self._gripper_cam_aligned = False
 
     def request_gripper_cam_alignment(self):
-        """Drive wrist joints so gripper cam view matches arm extend direction."""
+        """Drive wrist joints so gripper cam looks horizontally forward in base_link."""
         self._begin_cam_alignment('gripper')
 
     def request_head_cam_alignment(self):
-        """Drive head pan/tilt so head cam view matches arm extend direction."""
+        """Head alignment is disabled; head pan/tilt are never driven from the GUI."""
         self._begin_cam_alignment('head')
+
+    @staticmethod
+    def _pose_cmd_include_head() -> bool:
+        return os.environ.get('VLMOTION_POSE_CMD_INCLUDE_HEAD', '0').strip() in (
+            '1',
+            'true',
+            'yes',
+        )
+
+    def _qpos_for_pose_cmd(self, qpos: list) -> list:
+        """Streaming pose targets: wrist/arm only by default (head slots = NaN)."""
+        out = list(qpos)
+        if not self._pose_cmd_include_head() and len(out) > 6:
+            out[5] = float('nan')
+            out[6] = float('nan')
+        return out
+
+    def _publish_qpos(self, qpos: list):
+        from std_msgs.msg import Float64MultiArray
+
+        msg = Float64MultiArray()
+        msg.data = [float(value) for value in self._qpos_for_pose_cmd(qpos)]
+        self.pose_pub.publish(msg)
 
     def _qpos_hold(self):
         joints = self._joints
@@ -403,22 +455,17 @@ class RosLink(QObject):
         if phase == 'run':
             self._publish_grasp_pose()
 
-    def _alignment_qpos(self, qpos):
+    def _align_tick(self):
         from .stretch3_tf_grasp import (
-            GRASP_WRIST_PITCH_RAD,
-            GRASP_WRIST_ROLL_RAD,
-            GRASP_WRIST_YAW_RAD,
+            gripper_wrist_step,
+            optical_z_alignment_with_forward,
         )
 
-        qpos[2] = GRASP_WRIST_YAW_RAD
-        qpos[3] = GRASP_WRIST_PITCH_RAD
-        qpos[4] = GRASP_WRIST_ROLL_RAD
-        return qpos
-
-    def _align_tick(self):
-        from .stretch3_tf_grasp import head_pan_tilt_step, optical_z_alignment_with_arm
-
         role = self._align_role or 'gripper'
+        if role == 'head':
+            self._align_wanted = False
+            self._align_phase = 'idle'
+            return
         phase = self._align_phase
         future = self._align_future
         if phase == 'idle':
@@ -447,23 +494,23 @@ class RosLink(QObject):
             qpos = self._qpos_hold()
             if qpos is None:
                 return
-            if role == 'head':
-                qpos = head_pan_tilt_step(qpos, self._tf)
-            else:
-                qpos = self._alignment_qpos(qpos)
-            from std_msgs.msg import Float64MultiArray
-
-            msg = Float64MultiArray()
-            msg.data = [float(value) for value in qpos]
-            self.pose_pub.publish(msg)
             now = self.node.get_clock().now().nanoseconds * 1e-9
+            yaw_before, pitch_before = qpos[2], qpos[3]
+            qpos = gripper_wrist_step(qpos, self._tf)
+            if (now - self._align_log_t > 2.0) and (
+                abs(qpos[2] - yaw_before) > 1e-5 or abs(qpos[3] - pitch_before) > 1e-5
+            ):
+                self.node.get_logger().info(
+                    f'align gripper cam: yaw={qpos[2]:.3f} pitch={qpos[3]:.3f}'
+                )
+            self._publish_qpos(qpos)
             if self._align_start_t <= 0.0:
                 self._align_start_t = now
             aligned = False
             if self._tf is not None:
-                dot = optical_z_alignment_with_arm(self._tf, role)
+                dot = optical_z_alignment_with_forward(self._tf, role)
                 aligned = dot is not None and dot >= 0.92
-            timeout_sec = 12.0 if role == 'head' else 8.0
+            timeout_sec = 8.0
             if not aligned and (now - self._align_start_t) >= timeout_sec:
                 aligned = True
                 self.node.get_logger().warn(
@@ -472,11 +519,8 @@ class RosLink(QObject):
             if aligned:
                 self._align_wanted = False
                 self._align_phase = 'idle'
-                if role == 'gripper':
-                    self._gripper_cam_aligned = True
-                    self.status_changed.emit('Gripper cam aligned with arm axis')
-                else:
-                    self.status_changed.emit('Head cam aligned with arm axis')
+                self._gripper_cam_aligned = True
+                self.status_changed.emit('Gripper cam aligned (horizontal forward)')
                 pending = self._call_trigger(self._deact_client)
                 if pending is not None:
                     self._align_future = pending
@@ -503,79 +547,116 @@ class RosLink(QObject):
             if not self._gripper_cam_aligned:
                 self._align_wanted = False
 
+    @staticmethod
+    def _pixel_yaw_err(px: int, py: int, width: int, height: int, camera: str) -> float:
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
+        if camera == HEAD_CAMERA:
+            return (float(py) - cy) / max(height, 1)
+        return -(float(px) - cx) / max(width, 1)
+
+    def _abort_grasp_too_far(self, z_m: float):
+        self._grasp_motion = 'blocked'
+        self._grasp_wanted = False
+        msg = f'无法 grasping：白點深度 {z_m:.2f} m > {GRASP_MAX_DEPTH_M:.1f} m'
+        if self.node is not None:
+            self.node.get_logger().warn(msg)
+        self.status_changed.emit(msg)
+
     def _publish_grasp_pose(self):
-        from std_msgs.msg import Float64MultiArray
         qpos = self._qpos_hold()
         if qpos is None:
             return
+        if self._grasp_motion == 'blocked':
+            return
+
         px, py = self._grasp_px, self._grasp_py
         with self._depth_lock:
             depth = None if self._depth is None else self._depth
-        if px is not None and py is not None and depth is not None:
-            z_m = self.depth_meters(px, py)
-            height, width = depth.shape[:2]
-            cx = (width - 1) / 2.0
-            cy = (height - 1) / 2.0
-            if self._camera == HEAD_CAMERA:
-                yaw_err = (float(py) - cy) / max(height, 1)
-                lift_err = (cx - float(px)) / max(width, 1)
-            else:
-                yaw_err = -(float(px) - cx) / max(width, 1)
-                lift_err = (cy - float(py)) / max(height, 1)
 
-            arm_err_m = None
-            lift_err_m = None
-            if (
-                self._camera == GRIPPER_CAMERA
-                and self._tf is not None
-                and self._camera_info is not None
-                and z_m is not None
-            ):
-                from .stretch3_tf_grasp import arm_lift_errors_m
+        if px is None or py is None or depth is None:
+            self._publish_qpos(qpos)
+            return
 
-                tf_err = arm_lift_errors_m(self._tf, px, py, z_m, self._camera_info)
-                if tf_err is not None:
-                    arm_err_m, lift_err_m = tf_err
+        z_m = self.depth_meters(px, py)
+        height, width = depth.shape[:2]
+        yaw_err = self._pixel_yaw_err(px, py, width, height, self._camera)
+        motion = self._grasp_motion
 
-            centered = abs(yaw_err) < 0.05 and abs(lift_err) < 0.05
-            closing = z_m is not None and z_m <= 0.28 and centered
-            if closing:
-                v_arm = 0.0
-                v_lift = 0.0
-                rotate = 0.0
-                grip_target = 0.0
-            elif arm_err_m is not None and lift_err_m is not None:
-                v_arm = max(-0.10, min(0.18, 0.55 * arm_err_m))
-                v_lift = max(-0.06, min(0.06, 0.45 * lift_err_m))
-                rotate = max(-0.015, min(0.015, 0.8 * yaw_err))
-                grip_target = 0.45
-            else:
-                dist_err = 0.0 if z_m is None else (z_m - 0.38)
-                v_arm = 0.0 if z_m is None else max(-0.10, min(0.18, 0.8 * dist_err))
-                v_lift = max(-0.06, min(0.06, 0.6 * lift_err))
-                rotate = max(-0.015, min(0.015, 0.8 * yaw_err))
-                grip_target = 0.45
-            qpos[0] = max(0.0, min(0.52, qpos[0] + v_arm * 0.1))
-            qpos[1] = max(0.2, min(1.10, qpos[1] + v_lift * 0.1))
-            qpos[7] = qpos[7] + max(-0.05, min(0.05, grip_target - qpos[7]))
+        if motion == 'idle':
+            if z_m is None:
+                self._publish_qpos(qpos)
+                return
+            if z_m > GRASP_MAX_DEPTH_M:
+                self._abort_grasp_too_far(z_m)
+                return
+            self._grasp_depth_m = z_m
+            extend_delta = max(0.0, z_m - GRASP_ARM_DEPTH_OFFSET_M)
+            self._grasp_extend_target_m = max(0.0, min(0.52, qpos[0] + extend_delta))
+            self._grasp_motion = 'close_grip'
+            if self.node is not None:
+                self.node.get_logger().info(
+                    f'grasp: depth={z_m:.2f} m → close grip, center yaw, '
+                    f'extend arm +{extend_delta:.2f} m'
+                )
+
+        motion = self._grasp_motion
+        qpos[8] = 0.0
+
+        if motion == 'close_grip':
+            qpos[7] = qpos[7] + max(-0.08, min(0.08, GRASP_GRIPPER_CLOSED - qpos[7]))
+            qpos[9] = 0.0
+            if abs(qpos[7] - GRASP_GRIPPER_CLOSED) < 0.03:
+                self._grasp_motion = 'center'
+            self._publish_qpos(qpos)
+            return
+
+        if motion == 'center':
+            rotate = max(-0.015, min(0.015, 0.8 * yaw_err))
+            qpos[7] = GRASP_GRIPPER_CLOSED
             qpos[9] = rotate
-            now = self.node.get_clock().now().nanoseconds * 1e-9
-            if now - self._grasp_log_t > 2.0:
-                self._grasp_log_t = now
-                z_text = '--' if z_m is None else f'{z_m:.2f}'
-                if arm_err_m is not None:
-                    self.node.get_logger().info(
-                        f'grasp tf arm_err={arm_err_m:+.3f} lift_err={lift_err_m:+.3f} '
-                        f'arm={qpos[0]:.3f} lift={qpos[1]:.3f} z={z_text}'
+            if abs(yaw_err) < GRASP_CENTER_FRAC:
+                self._grasp_motion = 'extend'
+                qpos[9] = 0.0
+                if self.node is not None:
+                    self.node.get_logger().info('grasp: white point centered — extending arm')
+            self._publish_qpos(qpos)
+            return
+
+        if motion == 'extend':
+            target = self._grasp_extend_target_m
+            qpos[7] = GRASP_GRIPPER_CLOSED
+            qpos[9] = 0.0
+            if target is not None:
+                qpos[0] = max(0.0, min(0.52, qpos[0] + max(-0.02, min(0.02, target - qpos[0]))))
+                if abs(qpos[0] - target) < 0.008:
+                    self._grasp_motion = 'done'
+                    depth_text = '--' if self._grasp_depth_m is None else f'{self._grasp_depth_m:.2f}'
+                    self.status_changed.emit(
+                        f'LLM Grasping: extend complete (depth {depth_text} m)'
                     )
-                else:
-                    self.node.get_logger().info(
-                        f'grasp cmd arm={qpos[0]:.3f} lift={qpos[1]:.3f} '
-                        f'yaw={qpos[9]:+.3f} z={z_text}'
-                    )
-        msg = Float64MultiArray()
-        msg.data = [float(value) for value in qpos]
-        self.pose_pub.publish(msg)
+                    if self.node is not None:
+                        self.node.get_logger().info(
+                            f'grasp: arm reached {qpos[0]:.3f} m (target {target:.3f})'
+                        )
+            self._publish_qpos(qpos)
+            return
+
+        if motion == 'done':
+            qpos[7] = GRASP_GRIPPER_CLOSED
+            qpos[9] = 0.0
+            self._publish_qpos(qpos)
+            return
+
+        now = self.node.get_clock().now().nanoseconds * 1e-9 if self.node else 0.0
+        if now - self._grasp_log_t > 2.0:
+            self._grasp_log_t = now
+            z_text = '--' if z_m is None else f'{z_m:.2f}'
+            if self.node is not None:
+                self.node.get_logger().info(
+                    f'grasp track px=({px},{py}) z={z_text} motion={self._grasp_motion}'
+                )
+        self._publish_qpos(qpos)
 
     def publish_user_input(self, text: str):
         if self.node is None or not text:

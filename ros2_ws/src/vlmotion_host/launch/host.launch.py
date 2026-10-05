@@ -38,7 +38,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_base_motion', default_value='0'),
         DeclareLaunchArgument(
             'model_path',
-            default_value='wentao-yuan/robopoint-v1-vicuna-v1.5-13b',
+            default_value='/workspace/models/vla13',
         ),
         session,
         gui,

@@ -366,7 +366,7 @@ class ServerProcess:
 
     def start_model_worker(self, host="0.0.0.0", controller_url="http://127.0.0.1:11000",
                            port=22000, worker_url=None,
-                           model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", load_4bit=True):
+                           model_path="/workspace/models/vla13", load_4bit=True):
         if worker_url is None:
             worker_url = f"http://{_client_host(host)}:{port}"
         cmd = [
@@ -710,11 +710,14 @@ class YoloResultSubscriberThread(QThread):
             pass
 
 
+DEFAULT_CAMERA_EXPOSURE = 'low'
+
+
 class DirectCameraThread(QThread):
     frame_received = pyqtSignal(object)
     status_changed = pyqtSignal(str)
 
-    def __init__(self, camera: str = 'D405', exposure: str = 'low'):
+    def __init__(self, camera: str = 'D405', exposure: str = DEFAULT_CAMERA_EXPOSURE):
         super().__init__()
         self.camera = camera
         self.exposure = exposure
@@ -823,7 +826,7 @@ class DirectCameraThread(QThread):
 
 
 class RoboPointMainWindow(QMainWindow):
-    def __init__(self, controller_url=None, autostart=False, model_path="wentao-yuan/robopoint-v1-vicuna-v1.5-13b",
+    def __init__(self, controller_url=None, autostart=False, model_path="/workspace/models/vla13",
                  load_4bit=True, use_remote_stream=False):
         super().__init__()
         self.setWindowTitle("RoboPoint - Visual Servoing")
@@ -923,6 +926,8 @@ class RoboPointMainWindow(QMainWindow):
             QTimer.singleShot(1000, self.refresh_model_list)
         if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
             QTimer.singleShot(500, self._start_ros_camera)
+        elif not self.use_remote_stream:
+            QTimer.singleShot(500, self._ensure_camera_stream)
 
         # Start YOLO subscriber (optional publisher)
         self.start_yolo_subscriber()
@@ -996,13 +1001,6 @@ class RoboPointMainWindow(QMainWindow):
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Camera:"))
         self.camera_selector = QComboBox(); self.camera_selector.addItems(["top camera", "head camera", "gripper camera"]) ; row1.addWidget(self.camera_selector)
         sender_layout.addLayout(row1)
-        row2 = QHBoxLayout(); row2.addWidget(QLabel("Exposure:"))
-        self.exposure_selector = QComboBox(); self.exposure_selector.addItems(["low", "medium", "auto"]) ; row2.addWidget(self.exposure_selector)
-        sender_layout.addLayout(row2)
-        btnrow = QHBoxLayout();
-        self.btn_start_sender = QPushButton("Start Camera"); self.btn_stop_sender = QPushButton("Stop Camera"); self.btn_stop_sender.setEnabled(False)
-        btnrow.addWidget(self.btn_start_sender); btnrow.addWidget(self.btn_stop_sender)
-        sender_layout.addLayout(btnrow)
         left_layout.addWidget(sender_group)
 
         # LLM Grasping controls (white-point -> 3D -> publish)
@@ -1014,14 +1012,21 @@ class RoboPointMainWindow(QMainWindow):
         # Add a dedicated checkbox for LLM flow to avoid confusion
         self.manage_llm_demo_checkbox = QCheckBox("Manage Visual Servoing process")
         self.manage_llm_demo_checkbox.setChecked(True)
-        # Grasp closeness control (extra push along viewing ray)
-        self.extra_push_cm_spin = QDoubleSpinBox(); self.extra_push_cm_spin.setRange(0.0, 5.0); self.extra_push_cm_spin.setSingleStep(0.5); self.extra_push_cm_spin.setValue(3.0)
-        self.extra_push_cm_spin.setSuffix(" cm")
-        extra_row = QHBoxLayout(); extra_row.addWidget(QLabel("Grasp Offset (toward object):")); extra_row.addWidget(self.extra_push_cm_spin)
+        from .stretch3_tf_grasp import gripper_view_bias_deg
+
+        yaw0, pitch0, roll0 = gripper_view_bias_deg()
+        self.gripper_yaw_deg = self._make_gripper_ryp_spin(yaw0)
+        self.gripper_pitch_deg = self._make_gripper_ryp_spin(pitch0)
+        self.gripper_roll_deg = self._make_gripper_ryp_spin(roll0)
+        ryp_row = QHBoxLayout()
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Yaw', self.gripper_yaw_deg))
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Pitch', self.gripper_pitch_deg))
+        ryp_row.addLayout(self._make_gripper_ryp_cell('Roll', self.gripper_roll_deg))
+        ryp_row.addStretch()
+        llm_layout.addLayout(ryp_row)
         # Place buttons side-by-side
         llmrow = QHBoxLayout(); llmrow.addWidget(self.btn_start_llm); llmrow.addWidget(self.btn_stop_llm)
         llm_layout.addLayout(llmrow)
-        llm_layout.addLayout(extra_row)
         llm_layout.addWidget(self.btn_clean_llm)
         llm_layout.addWidget(self.llm_status)
         llm_layout.addWidget(self.manage_llm_demo_checkbox)
@@ -1091,8 +1096,6 @@ class RoboPointMainWindow(QMainWindow):
         self.stop_services_btn.clicked.connect(self.stop_services)
         self.temperature_slider.valueChanged.connect(self.update_temperature)
         self.top_p_slider.valueChanged.connect(self.update_top_p)
-        self.btn_start_sender.clicked.connect(self.start_camera)
-        self.btn_stop_sender.clicked.connect(self.stop_camera)
         self.camera_selector.currentTextChanged.connect(lambda _: self.on_camera_selection_changed())
         self.btn_start_yolo.clicked.connect(self.start_yolo_grasping)
         self.btn_stop_yolo.clicked.connect(self.stop_yolo_grasping)
@@ -1111,6 +1114,12 @@ class RoboPointMainWindow(QMainWindow):
             self._tilt_apply_timer.timeout.connect(self._apply_pending_tilt)
         except Exception:
             pass
+        self._gripper_ryp_apply_timer = QTimer(self)
+        self._gripper_ryp_apply_timer.setSingleShot(True)
+        self._gripper_ryp_apply_timer.setInterval(150)
+        self._gripper_ryp_apply_timer.timeout.connect(self._apply_gripper_ryp_from_spins)
+        for spin in (self.gripper_yaw_deg, self.gripper_pitch_deg, self.gripper_roll_deg):
+            spin.valueChanged.connect(self._on_gripper_ryp_spin_changed)
 
         # Image label mouse click connection
         self.image_label.mouse_clicked.connect(self.on_image_clicked)
@@ -1142,6 +1151,65 @@ class RoboPointMainWindow(QMainWindow):
             self.camera_thread = None
         self.start_camera_receiver()
 
+    @staticmethod
+    def _make_gripper_ryp_spin(value_deg: float):
+        spin = QDoubleSpinBox()
+        spin.setRange(-90.0, 90.0)
+        spin.setSingleStep(0.5)
+        spin.setDecimals(1)
+        spin.setSuffix('°')
+        spin.setMaximumWidth(72)
+        spin.setValue(float(value_deg))
+        return spin
+
+    def _make_gripper_ryp_cell(self, label: str, spin: QDoubleSpinBox):
+        cell = QHBoxLayout()
+        cell.setSpacing(4)
+        cell.addWidget(QLabel(label))
+        cell.addWidget(spin)
+        return cell
+
+    def _sync_gripper_ryp_spins(self):
+        from .stretch3_tf_grasp import gripper_view_bias_deg
+
+        yaw, pitch, roll = gripper_view_bias_deg()
+        for spin, val in (
+            (self.gripper_yaw_deg, yaw),
+            (self.gripper_pitch_deg, pitch),
+            (self.gripper_roll_deg, roll),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(float(val))
+            spin.blockSignals(False)
+
+    def _on_gripper_ryp_spin_changed(self, _value=None):
+        self._gripper_ryp_apply_timer.start()
+
+    def _apply_gripper_ryp_from_spins(self):
+        from .stretch3_tf_grasp import set_gripper_view_bias_deg
+
+        set_gripper_view_bias_deg(
+            yaw_deg=float(self.gripper_yaw_deg.value()),
+            pitch_deg=float(self.gripper_pitch_deg.value()),
+            roll_deg=float(self.gripper_roll_deg.value()),
+        )
+        self._realign_gripper_cam_after_ryp_change()
+
+    def _realign_gripper_cam_after_ryp_change(self):
+        if os.environ.get('VLMOTION_ROS_CAMERA') != '1':
+            return
+        from .ros_link import GRIPPER_CAMERA
+
+        cam = getattr(self, 'current_camera', None)
+        if cam != GRIPPER_CAMERA:
+            return
+        link = getattr(self, 'ros_link', None)
+        if link is None:
+            self._ensure_ros_link()
+            link = self.ros_link
+        if link is not None:
+            link.request_gripper_cam_alignment()
+
     def _llm_grasp_start_allowed(self):
         from .ros_link import GRIPPER_CAMERA
 
@@ -1164,24 +1232,15 @@ class RoboPointMainWindow(QMainWindow):
         except Exception:
             pass
         if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
-            from .ros_link import GRIPPER_CAMERA, HEAD_CAMERA
+            from .ros_link import GRIPPER_CAMERA
 
             self._start_ros_camera()
             link = self.ros_link
-            if link is not None:
-                if self.current_camera == GRIPPER_CAMERA:
-                    link.request_gripper_cam_alignment()
-                    self.llm_status.setText("LLM Grasping: aligning gripper cam to arm axis…")
-                elif self.current_camera == HEAD_CAMERA:
-                    link.request_head_cam_alignment()
+            if link is not None and self.current_camera == GRIPPER_CAMERA:
+                link.request_gripper_cam_alignment()
+                self.llm_status.setText("LLM Grasping: aligning gripper cam forward (level)…")
             self._update_llm_grasp_controls()
             return
-        if self.current_camera == 'head camera':
-            try:
-                from VLServo.pose_utils import set_head_pan_tilt_deg
-                set_head_pan_tilt_deg(0.0, 0.0)
-            except Exception as e:
-                logger.warning(f"Head cam alignment failed: {e}")
         if self.current_camera == 'gripper camera':
             try:
                 from VLServo.pose_utils import set_gripper_cam_grasp_wrist_pose
@@ -1190,6 +1249,8 @@ class RoboPointMainWindow(QMainWindow):
                 logger.warning(f"Gripper cam wrist alignment failed: {e}")
         if self.use_remote_stream:
             self.restart_camera_receiver()
+        elif os.environ.get('VLMOTION_ROS_CAMERA') != '1':
+            self._ensure_camera_stream()
         self._update_llm_grasp_controls()
 
     def start_yolo_subscriber(self):
@@ -1268,15 +1329,23 @@ class RoboPointMainWindow(QMainWindow):
                     )
                     self.llm_session_active = False
                     return
+                if px_py is not None and link.grasp_depth_blocked(px_py[0], px_py[1]):
+                    self.llm_session_active = False
+                    self.llm_status.setText('无法 grasping：白點深度 > 0.7 m')
+                    self.btn_stop_llm.setEnabled(False)
+                    self._update_llm_grasp_controls()
+                    return
                 link.start_grasp(None if px_py is None else px_py[0], None if px_py is None else px_py[1])
                 if getattr(self, '_ros_grasp_timer', None) is None:
                     self._ros_grasp_timer = QTimer(self)
                     self._ros_grasp_timer.timeout.connect(self._publish_ros_grasp_target)
                 self._ros_grasp_timer.start(200)
                 if px_py is not None:
-                    self.llm_status.setText(f"LLM Grasping: publishing joint_pose_cmd ({px_py[0]}, {px_py[1]})")
+                    self.llm_status.setText(
+                        f"LLM Grasping: tracking white point ({px_py[0]}, {px_py[1]})"
+                    )
                 else:
-                    self.llm_status.setText("LLM Grasping: publishing joint_pose_cmd, waiting for white point")
+                    self.llm_status.setText("LLM Grasping: waiting for white point")
                 self.btn_stop_llm.setEnabled(True)
                 self._update_llm_grasp_controls()
                 return
@@ -1300,11 +1369,7 @@ class RoboPointMainWindow(QMainWindow):
                         time.sleep(0.1)
                     except Exception:
                         pass
-                try:
-                    ep_m = float(self.extra_push_cm_spin.value()) / 100.0
-                except Exception:
-                    ep_m = None
-                self.white_point_proc.start(px_py[0], px_py[1], self.use_remote_yolo, 0.0, ep_m)
+                self.white_point_proc.start(px_py[0], px_py[1], self.use_remote_yolo, 0.0)
                 self.llm_status.setText(f"LLM Grasping: Running at ({px_py[0]}, {px_py[1]})")
                 self.btn_stop_llm.setEnabled(True)
             else:
@@ -1910,21 +1975,13 @@ class RoboPointMainWindow(QMainWindow):
                     self.white_point_proc.stop()
                 except Exception:
                     pass
-                try:
-                    ep_m = float(self.extra_push_cm_spin.value()) / 100.0
-                except Exception:
-                    ep_m = None
-                self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0)
                 self.llm_status.setText("LLM Grasping: Running")
                 # self.llm_status.setText(f"LLM Grasping: Clicked to ({self.llm_tracked_px}, {self.llm_tracked_py})")
             else:
                 # If a session is active, start publishing now; otherwise just record the point
                 if self.llm_session_active:
-                    try:
-                        ep_m = float(self.extra_push_cm_spin.value()) / 100.0
-                    except Exception:
-                        ep_m = None
-                    self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                    self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0)
                     self.llm_status.setText("LLM Grasping: Running")
                     # self.llm_status.setText(f"LLM Grasping: Running at ({self.llm_tracked_px}, {self.llm_tracked_py})")
                     self.btn_stop_llm.setEnabled(True)
@@ -1959,6 +2016,8 @@ class RoboPointMainWindow(QMainWindow):
             pass
 
     def _apply_pending_tilt(self):
+        if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
+            return
         try:
             from VLServo.pose_utils import set_head_tilt_deg
             set_head_tilt_deg(float(self._pending_tilt_deg))
@@ -1997,12 +2056,11 @@ class RoboPointMainWindow(QMainWindow):
                 pass
             self.direct_camera_thread = None
         try:
-            exposure = self.exposure_selector.currentText()
-            self.direct_camera_thread = DirectCameraThread(camera=GRIPPER_CAMERA, exposure=exposure)
+            self.direct_camera_thread = DirectCameraThread(
+                camera=GRIPPER_CAMERA, exposure=DEFAULT_CAMERA_EXPOSURE
+            )
             self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
             self.direct_camera_thread.start()
-            self.btn_start_sender.setEnabled(False)
-            self.btn_stop_sender.setEnabled(True)
         except Exception:
             pass
 
@@ -2015,6 +2073,15 @@ class RoboPointMainWindow(QMainWindow):
 
     def _on_ros_link_status(self, text: str):
         lower = text.lower()
+        if '无法 grasping' in text:
+            self.llm_session_active = False
+            self.llm_status.setText(text)
+            self.btn_stop_llm.setEnabled(False)
+            self._update_llm_grasp_controls()
+            return
+        if self.llm_session_active and text.startswith('LLM Grasping:'):
+            self.llm_status.setText(text)
+            return
         if not self.llm_session_active and 'gripper cam aligned' in lower:
             self.llm_status.setText('LLM Grasping: gripper cam ready — press Start')
             self._update_llm_grasp_controls()
@@ -2027,8 +2094,6 @@ class RoboPointMainWindow(QMainWindow):
         if not self._ros_camera_started:
             link.start()
             self._ros_camera_started = True
-            self.btn_start_sender.setEnabled(False)
-            self.btn_stop_sender.setEnabled(True)
         try:
             self.current_camera = self.camera_selector.currentText() or 'top camera'
         except Exception:
@@ -2052,40 +2117,46 @@ class RoboPointMainWindow(QMainWindow):
             ys = [p[1] for p in self.latest_llm_points]
             self.ros_link.publish_pixel(int(np.mean(xs)), int(np.mean(ys)))
 
-    def start_camera(self):
+    def _stop_local_direct_camera(self):
+        try:
+            if self.direct_camera_thread is not None:
+                self.direct_camera_thread.stop()
+                self.direct_camera_thread.wait(1000)
+        except Exception:
+            pass
+        self.direct_camera_thread = None
+
+    def _ensure_camera_stream(self):
+        """Start or switch local RealSense preview (ROS uses _start_ros_camera)."""
         if os.environ.get('VLMOTION_ROS_CAMERA') == '1':
             self._start_ros_camera()
             return
-        # Stop remote subscriber if running locally
-        if not self.use_remote_stream and self.camera_thread is not None:
+        if self.use_remote_stream:
+            return
+        if self.camera_thread is not None:
             try:
-                self.camera_thread.stop(); self.camera_thread.wait(500)
+                self.camera_thread.stop()
+                self.camera_thread.wait(500)
             except Exception:
                 pass
             self.camera_thread = None
-
-        # Start direct RealSense capture
         try:
             cam = self.camera_selector.currentText()
-            exposure = self.exposure_selector.currentText()
-            # Update current camera for display orientation handling
-            self.current_camera = cam
-            if self.direct_camera_thread is not None:
-                return
-            self.direct_camera_thread = DirectCameraThread(camera=cam, exposure=exposure)
+        except Exception:
+            cam = getattr(self, 'current_camera', 'top camera') or 'top camera'
+        self.current_camera = cam
+        running = self.direct_camera_thread
+        if running is not None and getattr(running, 'camera', None) == cam:
+            return
+        self._stop_local_direct_camera()
+        try:
+            self.direct_camera_thread = DirectCameraThread(
+                camera=cam, exposure=DEFAULT_CAMERA_EXPOSURE
+            )
             self.direct_camera_thread.frame_received.connect(self.on_camera_frame)
             self.direct_camera_thread.start()
-            self.btn_start_sender.setEnabled(False); self.btn_stop_sender.setEnabled(True)
         except Exception as e:
-            QMessageBox.critical(self, "Camera", f"Failed to start: {e}")
-
-    def stop_camera(self):
-        try:
-            if self.direct_camera_thread is not None:
-                self.direct_camera_thread.stop(); self.direct_camera_thread.wait(1000)
-        finally:
-            self.direct_camera_thread = None
-            self.btn_start_sender.setEnabled(True); self.btn_stop_sender.setEnabled(False)
+            logger.error(f"Failed to start local camera: {e}")
 
     def start_services(self):
         try:
@@ -2420,11 +2491,9 @@ class RoboPointMainWindow(QMainWindow):
                             self.llm_tracked_px, self.llm_tracked_py = int(px), int(py)
                             self.llm_tracker = None
                             try:
-                                try:
-                                    ep_m = float(self.extra_push_cm_spin.value()) / 100.0
-                                except Exception:
-                                    ep_m = None
-                                self.white_point_proc.start(self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0, ep_m)
+                                self.white_point_proc.start(
+                                    self.llm_tracked_px, self.llm_tracked_py, self.use_remote_yolo, 0.0,
+                                )
                                 self.llm_status.setText(f"LLM Grasping: Running at ({self.llm_tracked_px}, {self.llm_tracked_py})")
                                 self.btn_stop_llm.setEnabled(True)
                             except Exception:
@@ -2539,7 +2608,7 @@ class RoboPointMainWindow(QMainWindow):
 def main():
     parser = argparse.ArgumentParser(description="RoboPoint Visual Servoing GUI")
     parser.add_argument("--controller-url", type=str, default="http://127.0.0.1:11000", help="Controller URL")
-    parser.add_argument("--model-path", type=str, default="wentao-yuan/robopoint-v1-vicuna-v1.5-13b", help="Model path")
+    parser.add_argument("--model-path", type=str, default="/workspace/models/vla13", help="Model path")
     parser.add_argument("--load-4bit", action="store_true", default=True, help="Load model in 4-bit mode")
     parser.add_argument("--autostart", action="store_true", help="Start the controller and model worker with the window")
     parser.add_argument('-r', '--remote', action='store_true', help='Receive camera images from a remote robot (subscribe to robot IP).')

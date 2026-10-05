@@ -20,7 +20,7 @@ def generate_launch_description():
 
     model_path_arg = DeclareLaunchArgument(
         'model_path',
-        default_value='wentao-yuan/robopoint-v1-vicuna-v1.5-13b',
+        default_value='/workspace/models/vla13',
         description='Model to load in the VLPoint GUI'
     )
 

@@ -77,7 +77,11 @@ docker logs -f vlmotion-stretch3-bridge
 
 Stop a machine's containers with `./run.sh 4060ti stop` or `./run.sh stretch3 stop`.
 
-The default model is `wentao-yuan/robopoint-v1-vicuna-v1.5-13b` (`MODEL_PATH` in `.env`).
+The default model is the local [PME033541/vla13](https://huggingface.co/PME033541/vla13) checkpoint at `/workspace/models/vla13` (`MODEL_PATH` in `.env`). Download it once with:
+
+```bash
+hf download PME033541/vla13 --local-dir models/vla13 --exclude "runs/*"
+```
 
 ## License
 

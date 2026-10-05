@@ -55,6 +55,9 @@ temp/
 # Local model cache (Hugging Face weights)
 .cache/
 
+# Local model weights (e.g. models/vla13)
+models/
+
 # Model checkpoints and data
 *.pth
 *.ckpt
