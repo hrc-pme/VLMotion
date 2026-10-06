@@ -360,6 +360,18 @@ class CLIPVisionTower(nn.Module):
             delta = self.sam3_fusion(torch.cat((clip_work, sam_work, spatial), dim=-1))
             gate = torch.tanh(self.sam3_fusion_gate.to(dtype=work_dtype))
             return (clip_work + gate * delta).to(dtype=clip_features.dtype)
+        except Exception as exc:
+            warnings.warn(
+                f"SAM3 fusion failed ({exc}); continuing with CLIP features only."
+            )
+            self.mm_use_sam3_conditioning = False
+            try:
+                self.unload_sam3_model()
+            except Exception:
+                pass
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return clip_features
         finally:
             if self.mm_sam3_unload_after_forward:
                 self.unload_sam3_model()

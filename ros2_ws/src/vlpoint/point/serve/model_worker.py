@@ -1137,7 +1137,13 @@ class ModelWorker:
                 pil_images = [load_image_from_base64(image) for image in images]
                 image_sizes = [image.size for image in pil_images]
                 if pil_images:
-                    sam3_candidates = detect_sam3_candidates(pil_images[0], args)
+                    try:
+                        sam3_candidates = detect_sam3_candidates(pil_images[0], args)
+                    except Exception as exc:
+                        print(f"SAM3 button detector skipped: {exc}")
+                        sam3_candidates = []
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                 images = process_images(pil_images, image_processor, model.config)
 
                 image_dtype = amp_dtype if amp_dtype is not None else torch.float16
@@ -1383,21 +1389,21 @@ class ModelWorker:
         except ValueError as e:
             print("Caught ValueError:", e)
             ret = {
-                "text": server_error_msg,
+                "text": f"{type(e).__name__}: {e}",
                 "error_code": 1,
             }
             yield json.dumps(ret).encode() + b"\0"
         except torch.cuda.CudaError as e:
             print("Caught torch.cuda.CudaError:", e)
             ret = {
-                "text": server_error_msg,
+                "text": f"{type(e).__name__}: {e}",
                 "error_code": 1,
             }
             yield json.dumps(ret).encode() + b"\0"
         except Exception as e:
             print("Caught Unknown Error", e)
             ret = {
-                "text": server_error_msg,
+                "text": f"{type(e).__name__}: {e}",
                 "error_code": 1,
             }
             yield json.dumps(ret).encode() + b"\0"
