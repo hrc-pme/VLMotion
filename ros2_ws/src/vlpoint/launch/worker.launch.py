@@ -59,14 +59,17 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('worker_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('worker_port', default_value='22000'),
-        DeclareLaunchArgument('controller_address', default_value='http://10.0.0.1:11000'),
-        DeclareLaunchArgument('worker_address', default_value='http://10.0.0.1:22000'),
-        DeclareLaunchArgument('model_path', default_value='PME033541/vla13'),
+        DeclareLaunchArgument('controller_address', default_value='http://127.0.0.1:11000'),
+        DeclareLaunchArgument('worker_address', default_value='http://127.0.0.1:22000'),
+        DeclareLaunchArgument('model_path', default_value='liuhaotian/llava-v1.5-13b'),
         DeclareLaunchArgument('device', default_value='cuda'),
         DeclareLaunchArgument('limit_model_concurrency', default_value='5'),
         DeclareLaunchArgument('stream_interval', default_value='1'),
         DeclareLaunchArgument('mm_use_sam3_conditioning', default_value='true'),
-        DeclareLaunchArgument('mm_sam3_vision_tower', default_value='facebook/sam3'),
+        DeclareLaunchArgument(
+            'mm_sam3_vision_tower',
+            default_value='/workspace/sam3_official/fork_finetuning/exported_models/sam3_fork_scissors_joint_balanced_official_full_ft'
+        ),
         DeclareLaunchArgument('mm_sam3_blend_alpha', default_value='0.35'),
         DeclareLaunchArgument('mm_sam3_mask_gamma', default_value='1.0'),
         DeclareLaunchArgument('mm_sam3_device', default_value='cuda'),

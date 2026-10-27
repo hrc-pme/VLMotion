@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - fork_v1_crowded_official_full_ft
+  - _self_
+
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_v1_crowded_official_full_ft_smoke
+
+trainer:
+  max_epochs: 1
+  skip_saving_ckpts: true

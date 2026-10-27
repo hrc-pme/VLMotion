@@ -1,9 +1,10 @@
 services:
-  vlpoint-inference:
+  vlpoint-sam3:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: vlpoint-inference
+    # image: docker-vlpoint-inference:latest
+    container_name: vlpoint-sam3
     hostname: vlpoint-dev
     restart: unless-stopped
     gpus: all
@@ -12,27 +13,25 @@ services:
       - QT_X11_NO_MITSHM=1
       - XDG_RUNTIME_DIR=/tmp/runtime-root
       - HF_HOME=/root/.cache/huggingface
+      - ROS_DOMAIN_ID=42
     volumes:
       # - ../models:/workspace/models:ro  # 模型目錄（只讀）
       - ../:/workspace
       - ../.cache/huggingface:/root/.cache/huggingface
       - /tmp/.X11-unix:/tmp/.X11-unix:rw  # X11 支援（如果需要）
       - /dev/dri:/dev/dri:rw  # GPU access for hardware acceleration
-      - /dev/video0:/dev/video0:rw  # 主攝影機
-      - /dev/video1:/dev/video1:rw  # 次攝影機（如果有）
-      - /dev/video2:/dev/video2:rw  # 第三攝影機（如果有）
-      - /dev/video3:/dev/video3:rw  # 第四攝影機（如果有）
-      - /dev/video4:/dev/video4:rw  # 第五攝影機（如果有）
-      - /dev/video5:/dev/video5:rw  # 第六攝影機（如果有）
+      # RealSense SDK also needs the USB device, not only V4L2 interfaces.
+      - /dev/bus/usb:/dev/bus/usb:rw
     network_mode: "host"
     privileged: true
     devices:
-      - /dev/video0:/dev/video0  # 主攝影機
-      - /dev/video1:/dev/video1  # 次攝影機（可選）
-      - /dev/video2:/dev/video2  # 第三攝影機（可選）
-      - /dev/video3:/dev/video3  # 第四攝影機（可選）
-      - /dev/video4:/dev/video4  # 第五攝影機（可選）
-      - /dev/video5:/dev/video5  # 第六攝影機（可選）
+      # The replacement D435 currently enumerates as video6 through video11.
+      - /dev/video6:/dev/video6
+      - /dev/video7:/dev/video7
+      - /dev/video8:/dev/video8
+      - /dev/video9:/dev/video9
+      - /dev/video10:/dev/video10
+      - /dev/video11:/dev/video11
     group_add:
       - video  # 添加到 video 群組以獲得攝影機權限
     stdin_open: true

@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /configs/fork/fork_scissors_joint_balanced_official_full_ft
+  - _self_
+
+# Fresh 20-epoch joint run from original SAM3 on the dataset with five extra forks.
+# Trainer uses bfloat16 autocast without float16-style gradient scaling.
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_scissors_joint_plate_v4_20ep_full_ft
+
+roboflow_train:
+  supercategory: ForkScissors.joint.plate_v2.full_ft
+
+joint_train_dataset:
+  samples_per_concept: 33
+
+scratch:
+  lr_transformer: 2.0e-05
+  lr_vision_backbone: 6.25e-06
+  lr_language_backbone: 1.25e-06
+
+trainer:
+  max_epochs: 20
+  val_epoch_freq: 10
+  model:
+    checkpoint_path: /workspace/sam3_official/checkpoints/sam3.pt
+    load_from_HF: false

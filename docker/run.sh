@@ -18,7 +18,7 @@ if [[ "${1-}" == "--root" ]]; then
 fi
 
 # 解析參數：支援 --root、容器名稱與數字型 ROS_DOMAIN_ID
-CONTAINER_NAME="vlpoint-inference"
+CONTAINER_NAME="vlpoint-sam3"
 
 is_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]
@@ -81,8 +81,8 @@ echo "進入容器: ${CONTAINER_NAME}"
 if [[ -n "${DOMAIN_ID}" ]]; then
   RUNTIME_DOMAIN_ID="${DOMAIN_ID}"
 else
-  # 若使用者未指定，沿用容器內已設定值，最後 fallback 到 0
-  RUNTIME_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+  # 若使用者未指定，沿用目前設定值，最後 fallback 到專案預設 42
+  RUNTIME_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
 fi
 
 echo "會在容器內自動 source /workspace/environment.sh（ROS_DOMAIN_ID=${RUNTIME_DOMAIN_ID}）"

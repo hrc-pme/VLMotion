@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - fork_f3_bbox_50_interactive
+  - _self_
+
+paths:
+  experiment_log_dir: /tmp/fork_interactive_smoke
+
+roboflow_train:
+  num_images: 2
+
+trainer:
+  max_epochs: 1
+  skip_saving_ckpts: true
+  data:
+    val:
+      dataset:
+        limit_ids: 2

@@ -1,0 +1,39 @@
+# @package _global_
+defaults:
+  - /configs/roboflow_v100/roboflow_v100_full_ft_100_images
+  - _self_
+
+# Official SAM 3 Appendix F.3 bbox-only recipe on the scissors domain.
+paths:
+  roboflow_vl_100_root: /workspace/sam3_official/fork_finetuning/data
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/scissors_f3_bbox_100_batch2
+  bpe_path: /workspace/sam3_official/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+
+roboflow_train:
+  num_images: 100
+  supercategory: Scissors.v7i.f3.coco
+
+scratch:
+  enable_segmentation: false
+  max_data_epochs: 40
+  num_train_workers: 0
+  train_batch_size: 2
+  gradient_accumulation_steps: 1
+
+trainer:
+  skip_saving_ckpts: false
+  max_epochs: 40
+  gradient_accumulation_steps: ${scratch.gradient_accumulation_steps}
+  model:
+    checkpoint_path: /workspace/sam3_official/checkpoints/sam3.pt
+    load_from_HF: false
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0
+
+launcher:
+  gpus_per_node: 1
+  use_cluster: false
+  job_array:
+    num_tasks: 1
+    task_index: 0

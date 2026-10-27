@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - scissors_v7_seg_decoder_heads
+  - _self_
+
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/scissors_v7_seg_decoder_heads_smoke
+
+roboflow_train:
+  num_images: 2
+
+scratch:
+  max_epochs: 1
+
+trainer:
+  max_epochs: 1

@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - scissors_crowded18_last_two_decoder_o2o
+  - _self_
+
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/scissors_crowded18_last_two_decoder_o2o_smoke
+
+scratch:
+  max_data_epochs: 1
+
+trainer:
+  max_epochs: 1
+  val_epoch_freq: 1
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0

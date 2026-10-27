@@ -57,9 +57,9 @@ temp/
 *.ckpt
 *.pt
 *.safetensors
-checkpoints/
-data/
-datasets/
+/checkpoints/
+/data/
+/datasets/
 
 # OS specific
 .DS_Store
@@ -67,4 +67,25 @@ Thumbs.db
 
 wit_token.txt
 
-*.jpg
+/*.jpg
+
+# Local runtime/build artifacts
+.cache/
+install/
+Outputs/
+Forks.v1i.coco/
+calibration_set/
+dataset composition/
+.nested_git_backups/
+
+# Vendored SAM3: keep source, training code and configs, but never commit
+# generated environments, datasets, checkpoints, exports or evaluations.
+sam3_official/.train_deps/
+sam3_official/.train_venv/
+sam3_official/checkpoints/
+sam3_official/fork_finetuning/data/
+sam3_official/fork_finetuning/datasets/
+sam3_official/fork_finetuning/experiments/
+sam3_official/fork_finetuning/evaluations/
+sam3_official/fork_finetuning/exported_models/
+sam3_official/fork_finetuning/qir_runs/

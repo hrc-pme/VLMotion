@@ -185,16 +185,22 @@ class CLIPVisionTower(nn.Module):
         return image_features
 
     @torch.no_grad()
-    def forward(self, images):
+    def forward(self, images, task_type="robopoint"):
         if type(images) is list:
             image_features = []
             for image in images:
-                image_input = self._apply_image_conditioning(image.unsqueeze(0))
+                if task_type == "general":
+                    image_input = image.unsqueeze(0)
+                else:
+                    image_input = self._apply_image_conditioning(image.unsqueeze(0))
                 image_forward_out = self.vision_tower(image_input.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
                 image_feature = self.feature_select(image_forward_out).to(image.dtype)
                 image_features.append(image_feature)
         else:
-            image_input = self._apply_image_conditioning(images)
+            if task_type == "general":
+                image_input = images
+            else:
+                image_input = self._apply_image_conditioning(images)
             image_forward_outs = self.vision_tower(image_input.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
             image_features = self.feature_select(image_forward_outs).to(images.dtype)
 
@@ -269,21 +275,24 @@ class CLIPVisionTowerS2(CLIPVisionTower):
         self.is_loaded = True
 
     @torch.no_grad()
-    def forward_feature(self, images):
-        image_input = self._apply_image_conditioning(images)
+    def forward_feature(self, images, task_type="robopoint"):
+        if task_type == "general":
+            image_input = images
+        else:
+            image_input = self._apply_image_conditioning(images)
         image_forward_outs = self.vision_tower(image_input.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
         image_features = self.feature_select(image_forward_outs).to(images.dtype)
         return image_features
 
     @torch.no_grad()
-    def forward(self, images):
+    def forward(self, images, task_type="robopoint"):
         if type(images) is list:
             image_features = []
             for image in images:
-                image_feature = self.multiscale_forward(self.forward_feature, image.unsqueeze(0), img_sizes=self.s2_scales, max_split_size=self.s2_split_size)
+                image_feature = self.multiscale_forward(self.forward_feature, image.unsqueeze(0), img_sizes=self.s2_scales, max_split_size=self.s2_split_size, task_type=task_type)
                 image_features.append(image_feature)
         else:
-            image_features = self.multiscale_forward(self.forward_feature, images, img_sizes=self.s2_scales, max_split_size=self.s2_split_size)
+            image_features = self.multiscale_forward(self.forward_feature, images, img_sizes=self.s2_scales, max_split_size=self.s2_split_size, task_type=task_type)
 
         return image_features
 

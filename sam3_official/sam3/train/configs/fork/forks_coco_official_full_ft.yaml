@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - /configs/roboflow_v100/roboflow_v100_full_ft_100_images
+  - _self_
+
+# Official Roboflow custom-dataset recipe with only dataset and output paths
+# changed for the new crowded-fork dataset.
+paths:
+  roboflow_vl_100_root: /workspace/sam3_official/fork_finetuning/data
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/forks_coco_official_full_ft
+  bpe_path: /workspace/sam3_official/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+
+roboflow_train:
+  num_images: null
+  supercategory: Forks.coco.official.full_ft
+
+scratch:
+  # Runtime-only adaptation for this container's limited shared memory.
+  num_train_workers: 0
+
+trainer:
+  skip_saving_ckpts: false
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0
+
+launcher:
+  gpus_per_node: 1
+  use_cluster: false
+  job_array:
+    num_tasks: 1
+    task_index: 0

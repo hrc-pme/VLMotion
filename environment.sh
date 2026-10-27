@@ -5,7 +5,7 @@
 MIN_DOMAIN_ID=0
 MAX_DOMAIN_ID=232
 
-ROS_DOMAIN_ID_INPUT=${1:-0}
+ROS_DOMAIN_ID_INPUT=${1:-42}
 
 if [[ "$ROS_DOMAIN_ID_INPUT" =~ ^[0-9]+$ ]] && \
    [[ "$ROS_DOMAIN_ID_INPUT" -ge "$MIN_DOMAIN_ID" ]] && \
@@ -24,6 +24,16 @@ else
     exit 1
   fi
 fi
+
+# Force Fast DDS to use UDPv4 between Docker containers.  Containers that do
+# not share an IPC namespace can discover each other while shared-memory data
+# delivery still fails; the UDP-only participant profile avoids that failure.
+export ROS_LOCALHOST_ONLY=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/fastdds_udp_only.xml
+# Newer Fast DDS releases use this spelling; exporting both is harmless and
+# keeps the workspace configuration forward-compatible.
+export FASTDDS_DEFAULT_PROFILES_FILE=/workspace/fastdds_udp_only.xml
 
 # Reduce noisy Python packaging warnings during colcon builds
 # - Silence setuptools 'develop' deprecation and related messages

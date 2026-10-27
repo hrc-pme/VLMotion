@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - scissors_crowded18_last_decoder_mask_o2o
+  - _self_
+
+# The final O2O assignment uses instance-mask similarity in addition to class
+# and box costs. Auxiliary decoder outputs without masks retain box matching.
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/scissors_crowded18_mask_aware_o2o
+
+scratch:
+  matcher:
+    _target_: sam3.train.matcher.BinaryHungarianMatcherV2
+    focal: true
+    cost_class: 2.0
+    cost_bbox: 5.0
+    cost_giou: 2.0
+    cost_mask: 2.0
+    cost_dice: 5.0
+    alpha: 0.25
+    gamma: 2
+    stable: false
+
+trainer:
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0

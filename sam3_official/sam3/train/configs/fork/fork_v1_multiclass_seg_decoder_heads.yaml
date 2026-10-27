@@ -1,0 +1,55 @@
+# @package _global_
+defaults:
+  - fork_v1_multiclass_seg_ft
+  - _self_
+
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_v1_multiclass_seg_decoder_heads_28_images
+
+scratch:
+  lr_decoder_body: 1.0e-5
+
+trainer:
+  model:
+    _target_: sam3.train.heads_only_model_builder.build_sam3_image_model_decoder_and_heads
+
+  optim:
+    options:
+      lr:
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_transformer}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_decoder_body}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+          param_names:
+            - 'transformer.decoder.layers.*'
+            - 'transformer.decoder.norm.*'
+            - 'transformer.decoder.query_embed.*'
+            - 'transformer.decoder.reference_points.*'
+            - 'transformer.decoder.boxRPB_embed_x.*'
+            - 'transformer.decoder.boxRPB_embed_y.*'
+            - 'transformer.decoder.ref_point_head.*'
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_vision_backbone}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+          param_names:
+            - 'backbone.vision_backbone.*'
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_language_backbone}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+          param_names:
+            - 'backbone.language_backbone.*'
+

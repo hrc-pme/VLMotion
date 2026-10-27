@@ -65,19 +65,43 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 # Install ROS 2 Humble and ROS tooling
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-desktop-full \
+      ros-humble-realsense2-camera \
+      ros-humble-realsense2-camera-msgs \
+      ros-humble-realsense2-description \
       python3-colcon-common-extensions \
       python3-rosdep \
       python3-argcomplete \
       whiptail \
       iproute2 \
     && rm -rf /var/lib/apt/lists/*
+# Add Intel RealSense repository
+# 安裝 Intel RealSense SDK 2.0
+# Add Intel RealSense repository (using keyserver to avoid PGP issues)
+RUN mkdir -p /etc/apt/keyrings && \
+    mkdir -p /root/.gnupg && chmod 700 /root/.gnupg && \
+    gpg --no-default-keyring --keyring /tmp/librealsense.keyring \
+        --keyserver keyserver.ubuntu.com \
+        --recv-keys FB0B24895113F120 && \
+    gpg --no-default-keyring --keyring /tmp/librealsense.keyring \
+        --export > /etc/apt/keyrings/librealsense.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/librealsense.gpg] \
+    https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" \
+    > /etc/apt/sources.list.d/librealsense.list
+
+# 安裝 librealsense2 套件 (不含 DKMS kernel modules)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    librealsense2 \
+    librealsense2-utils \
+    librealsense2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # Locale and ROS env
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     ROS_DISTRO=humble \
     YOLO_CONFIG_DIR=/workspace/.ultralytics \
-    ROS_DOMAIN_ID=0 \
+    ROS_DOMAIN_ID=42 \
     ROS_LOCALHOST_ONLY=0
 
 # Initialize rosdep database
@@ -88,7 +112,7 @@ SHELL ["/bin/bash", "-lc"]
 
 # Auto-source ROS environment for interactive shells
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
-    echo "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh \${ROS_DOMAIN_ID:-0}; fi" >> /root/.bashrc && \
+    echo "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh \${ROS_DOMAIN_ID:-42}; fi" >> /root/.bashrc && \
     echo "export PS1='\\u@\\h:\\w# '" >> /root/.bashrc
 
 # Ensure login shells also load .bashrc (for docker exec -it bash -l)
@@ -145,6 +169,9 @@ RUN pip3 install -c /tmp/constraints.txt \
     scikit-image \
     scikit-learn \
     PyQt5>=5.15.0
-
+RUN mkdir -p /etc/udev/rules.d && \
+    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="0411", MODE="0666"' > /etc/udev/rules.d/99-realsense.rules && \
+    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8087", MODE="0666"' >> /etc/udev/rules.d/99-realsense.rules
+    
 # Keep container alive for interactive work (no extra shell)
 CMD ["sleep", "infinity"]

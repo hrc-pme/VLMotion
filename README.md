@@ -16,6 +16,8 @@ VLMotion/
 │   └── src/
 │       ├── vlpoint/       # VLPoint package (controller and worker)
 │       └── vlservo/       # VLServo package (visual servoing)
+├── sam3_official/         # SAM3 training repository
+│   └── fork_finetuning/   # Fork/scissors fine-tuning scripts and outputs
 └── environment.sh         # Environment setup script
 ```
 
@@ -101,6 +103,29 @@ The VLServo package provides visual servoing functionality.
 ```bash
 ros2 launch vlservo vlservoing.launch.py
 ```
+
+## SAM3 Fine-tuning
+
+Fork/scissors SAM3 微調的完整說明請參考：
+
+- [Fine-tuning README](sam3_official/fork_finetuning/README.md)
+
+目前使用的主要腳本與設定：
+
+| 用途 | 位置 |
+| --- | --- |
+| 一鍵資料準備與完整訓練 | [`sam3_official/fork_finetuning/run_fork_scissors_joint_balanced_official_full_ft_train.sh`](sam3_official/fork_finetuning/run_fork_scissors_joint_balanced_official_full_ft_train.sh) |
+| Fork/scissors dataset 準備 | [`sam3_official/fork_finetuning/prepare_joint_fork_scissors_balanced.py`](sam3_official/fork_finetuning/prepare_joint_fork_scissors_balanced.py) |
+| 訓練設定 | [`sam3_official/sam3/train/configs/fork/fork_scissors_joint_balanced_official_full_ft.yaml`](sam3_official/sam3/train/configs/fork/fork_scissors_joint_balanced_official_full_ft.yaml) |
+| 將 native checkpoint 匯出成 worker 格式 | [`sam3_official/fork_finetuning/export_finetuned_hf.py`](sam3_official/fork_finetuning/export_finetuned_hf.py) |
+
+完整訓練入口：
+
+```bash
+bash /workspace/sam3_official/fork_finetuning/run_fork_scissors_joint_balanced_official_full_ft_train.sh
+```
+
+Native checkpoint、Hugging Face 權重儲存位置，以及如何替換到 worker，皆記錄於上述 fine-tuning README。
 
 ## Typical Workflow
 

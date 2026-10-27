@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - fork_f3_bbox_50_interactive_v2
+  - _self_
+
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_f3_bbox_50_interactive_v2_smoke
+
+roboflow_train:
+  num_images: 2
+
+roboflow_val:
+  num_images: 2
+
+scratch:
+  max_data_epochs: 1
+
+trainer:
+  max_epochs: 1
+  val_epoch_freq: 1
+  checkpoint:
+    save_freq: 0

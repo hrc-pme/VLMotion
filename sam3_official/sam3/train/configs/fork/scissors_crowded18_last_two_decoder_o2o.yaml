@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - scissors_crowded18_last_decoder_o2o
+  - _self_
+
+# Controlled capacity ablation: only decoder layers 4 and 5 differ from the
+# one-layer bbox-only O2O experiment.
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/scissors_crowded18_last_two_decoder_o2o
+
+trainer:
+  model:
+    _target_: sam3.train.heads_only_model_builder.build_sam3_image_model_last_two_decoder_o2o
+    checkpoint_path: /workspace/sam3_official/checkpoints/sam3.pt
+    load_from_HF: false
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0

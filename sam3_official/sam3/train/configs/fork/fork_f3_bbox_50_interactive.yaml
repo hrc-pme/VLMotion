@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - fork_f3_bbox_50
+  - _self_
+
+# Continue from F.3 and teach the detector to use one sampled error exemplar.
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_f3_bbox_50_interactive
+
+scratch:
+  # Interactive losses add a second decoder pass, so use a smaller adaptation LR.
+  lr_scale: 0.025
+  max_data_epochs: 10
+
+trainer:
+  max_epochs: 10
+  val_epoch_freq: 5
+  model:
+    checkpoint_path: /workspace/sam3_official/fork_finetuning/experiments/fork_f3_bbox_50_batch2/checkpoints/checkpoint.pt
+    num_interactive_steps_train: 1
+    interactive_prompt_score_threshold: 0.25
+    interactive_prompt_match_iou: 0.5
+    interactive_prompt_negative_max_iou: 0.1
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 5

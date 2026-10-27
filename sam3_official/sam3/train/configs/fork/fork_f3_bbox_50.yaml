@@ -1,0 +1,25 @@
+# @package _global_
+defaults:
+  - fork_bbox_full_ft
+  - _self_
+
+# Clean reproduction of the SAM 3 few-shot detection recipe (Appendix F.3).
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_f3_bbox_50_batch2
+
+roboflow_train:
+  num_images: 50
+  supercategory: Forks.v3i.coco
+
+scratch:
+  enable_segmentation: false
+  max_data_epochs: 40
+  train_batch_size: 2
+  gradient_accumulation_steps: 1
+
+trainer:
+  max_epochs: 40
+  gradient_accumulation_steps: ${scratch.gradient_accumulation_steps}
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0

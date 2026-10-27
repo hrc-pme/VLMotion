@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - fork_f3_bbox_50
+  - _self_
+
+# Controlled ablation of the official F.3 recipe: retain the model architecture
+# and Hungarian O2O supervision, but remove all O2M loss contribution.
+paths:
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_f3_bbox_50_o2o_only
+
+roboflow_train:
+  loss:
+    o2m_weight: 0.0
+
+trainer:
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 10

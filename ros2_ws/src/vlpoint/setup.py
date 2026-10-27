@@ -21,7 +21,11 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            # Optional: thin wrappers if needed in future
+            'counting_pass1 = point.serve.run_counting_pass1:main',
+            'counting_three_stage = point.serve.run_three_stage_counting:main',
+            'calibrate_counting_conformal = point.serve.calibrate_counting_conformal:main',
+            'analyze_pass1 = point.serve.analyze_pass1_results:main',
+            'build_intervention_regions = point.serve.build_intervention_regions:main',
         ],
     },
 )

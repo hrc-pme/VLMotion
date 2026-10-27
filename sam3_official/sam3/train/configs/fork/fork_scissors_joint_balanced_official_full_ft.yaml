@@ -1,0 +1,52 @@
+# @package _global_
+defaults:
+  - /configs/roboflow_v100/roboflow_v100_full_ft_100_images
+  - _self_
+
+# Official full-FT recipe; only the balanced joint dataset and output paths differ.
+paths:
+  roboflow_vl_100_root: /workspace/sam3_official/fork_finetuning/data
+  experiment_log_dir: /workspace/sam3_official/fork_finetuning/experiments/fork_scissors_joint_balanced_official_full_ft
+  bpe_path: /workspace/sam3_official/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+
+roboflow_train:
+  num_images: null
+  supercategory: ForkScissors.joint.balanced.official.full_ft
+
+scratch:
+  num_train_workers: 0
+
+joint_train_dataset:
+  _target_: sam3.train.data.torch_dataset.CocoConceptBalancedDataset
+  ann_file: ${paths.roboflow_vl_100_root}/${roboflow_train.supercategory}/train/_annotations.coco.json
+  samples_per_concept: 14
+  seed: 42
+  dataset:
+    _target_: sam3.train.data.sam3_image_dataset.Sam3ImageDataset
+    limit_ids: ${roboflow_train.num_images}
+    transforms: ${roboflow_train.train_transforms}
+    load_segmentation: ${scratch.enable_segmentation}
+    max_ann_per_img: 500000
+    multiplier: 1
+    max_train_queries: 50000
+    max_val_queries: 50000
+    training: true
+    use_caching: false
+    img_folder: ${paths.roboflow_vl_100_root}/${roboflow_train.supercategory}/train/
+    ann_file: ${paths.roboflow_vl_100_root}/${roboflow_train.supercategory}/train/_annotations.coco.json
+
+trainer:
+  skip_saving_ckpts: false
+  data:
+    train:
+      dataset: ${joint_train_dataset}
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0
+
+launcher:
+  gpus_per_node: 1
+  use_cluster: false
+  job_array:
+    num_tasks: 1
+    task_index: 0
