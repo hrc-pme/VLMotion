@@ -1,6 +1,4 @@
 from setuptools import find_packages, setup
-import os
-from glob import glob
 
 package_name = 'white_point_pipeline'
 
@@ -12,10 +10,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name, 'launch'),
-            glob('launch/*.launch.py') + glob('launch/rs_launch.py')),
-        (os.path.join('share', package_name, 'config'),
-            glob('config/*.rviz') + glob('config/*.yaml')),
+        ('share/' + package_name + '/launch',
+            ['launch/hellorobot_app.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -27,13 +23,9 @@ setup(
     entry_points={
         'console_scripts': [
             'white_point_gui = white_point_pipeline.white_point_gui:main',
-            'white_point_gui_standalone = white_point_pipeline.white_point_gui_standalone:main',
-            'white_point_gui_unity = white_point_pipeline.white_point_gui_unity:main',
             'white_point_to_3d = white_point_pipeline.white_point_to_3d:main',
-            'white_point_full_motion = white_point_pipeline.white_point_full_motion:main',
             'white_point_direct_motion = white_point_pipeline.white_point_direct_motion:main',
-            'keyboard_nav_teleop = white_point_pipeline.keyboard_nav_teleop:main',
-            'camera_tf_calibrator = white_point_pipeline.camera_tf_calibrator:main',
+            'odom_tf_bridge = white_point_pipeline.odom_tf_bridge:main',
         ],
     },
 )

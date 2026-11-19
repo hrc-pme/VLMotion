@@ -16,6 +16,10 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <exec_depend>speech_recognition_msgs</exec_depend>
+  <exec_depend>vlpoint</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

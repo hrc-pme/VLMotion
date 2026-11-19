@@ -13,6 +13,7 @@ import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 from rclpy.time import Time as RclpyTime
 from rclpy.duration import Duration as RclpyDuration
+from rclpy.qos import qos_profile_sensor_data
 from sklearn.cluster import DBSCAN
 
 # ----------------------------------------------------------
@@ -60,16 +61,19 @@ class WhitePointTo3D(Node):
         self.declare_parameter('depth_topic', '')
         self.declare_parameter('camera_info_topic', '')
         self.declare_parameter('camera_frame', '')
+        self.declare_parameter('target_frame', 'base_link')
         self.declare_parameter('rotate_display', True)
 
         depth_topic = self.get_parameter('depth_topic').get_parameter_value().string_value
         camera_info_topic = self.get_parameter('camera_info_topic').get_parameter_value().string_value
         self.camera_frame = self.get_parameter('camera_frame').get_parameter_value().string_value
+        self.target_frame = self.get_parameter('target_frame').get_parameter_value().string_value
         self.rotate_display = bool(self.get_parameter('rotate_display').value)
 
         self.get_logger().info(f'Camera depth topic: {depth_topic}')
         self.get_logger().info(f'Camera info topic: {camera_info_topic}')
         self.get_logger().info(f'Camera frame: {self.camera_frame}')
+        self.get_logger().info(f'Target frame: {self.target_frame}')
         self.get_logger().info(f'GUI rotate_display: {self.rotate_display}')
 
         # 對齊到 color 的深度 + color 內參
@@ -77,13 +81,13 @@ class WhitePointTo3D(Node):
             Image,
             depth_topic,
             self.depth_callback,
-            10
+            qos_profile_sensor_data
         )
         self.info_sub = self.create_subscription(
             CameraInfo,
             camera_info_topic,
             self.info_callback,
-            10
+            qos_profile_sensor_data
         )
 
         # GUI 點的 pixel（已經是旋轉 90° 後的座標）
@@ -379,7 +383,7 @@ class WhitePointTo3D(Node):
         normal_vector: (nx, ny, nz) 法向量方向（已歸一化）
         """
         marker = Marker()
-        marker.header.frame_id = 'base_link'
+        marker.header.frame_id = self.target_frame
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = 'wall_normal'
         marker.id = marker_id
@@ -424,7 +428,7 @@ class WhitePointTo3D(Node):
         theta_axis: 面板軸向角度（弧度）
         """
         marker = Marker()
-        marker.header.frame_id = 'base_link'
+        marker.header.frame_id = self.target_frame
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = 'panel_axes'
         marker.id = 0
@@ -570,18 +574,18 @@ class WhitePointTo3D(Node):
         pt_cam.point.z = Zo
 
         try:
-            # 直接從相機光學座標系轉到 base_link
+            # 直接從相機光學座標系轉到目標座標系。
             # TF 系統會自動處理所有中間的轉換
             if tf_time is not None:
                 tf = self.tf_buffer.lookup_transform(
-                    'base_link',
+                    self.target_frame,
                     self.camera_frame,
                     tf_time,
                     timeout=RclpyDuration(seconds=0.1)
                 )
             else:
                 tf = self.tf_buffer.lookup_transform(
-                    'base_link',
+                    self.target_frame,
                     self.camera_frame,
                     RclpyTime(),
                     timeout=RclpyDuration(seconds=0.1)
@@ -635,7 +639,7 @@ class WhitePointTo3D(Node):
                 # 發布 DBSCAN 處理前的原始點雲（藍色）
                 raw_cloud_msg = self.create_pointcloud2(
                     pts_base,
-                    'base_link',
+                    self.target_frame,
                     self.get_clock().now().to_msg()
                 )
                 self.raw_points_pub.publish(raw_cloud_msg)
@@ -648,7 +652,7 @@ class WhitePointTo3D(Node):
                     # 發布 DBSCAN 聚類後的牆面點雲（綠色）
                     wall_cloud_msg = self.create_pointcloud2(
                         wall_points,
-                        'base_link',
+                        self.target_frame,
                         self.get_clock().now().to_msg()
                     )
                     self.wall_points_pub.publish(wall_cloud_msg)
@@ -737,7 +741,7 @@ class WhitePointTo3D(Node):
             if tf_time is not None:
                 try:
                     tf = self.tf_buffer.lookup_transform(
-                        'base_link',
+                        self.target_frame,
                         self.camera_frame,
                         RclpyTime(),
                         timeout=RclpyDuration(seconds=0.1)

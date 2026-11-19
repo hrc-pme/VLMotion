@@ -2,95 +2,86 @@
 
 set -euo pipefail
 
-# 用法:
-#   ./docker/run.sh [--root] [容器名稱] [ROS_DOMAIN_ID]
-#   ./docker/run.sh [--root] [ROS_DOMAIN_ID]
-# 說明:
-#   - 若第一個非 --root 的參數是數字 (0-232)，視為 ROS_DOMAIN_ID（容器名稱使用預設）
-#   - 若第一個是名稱，第二個是數字，則分別視為 容器名稱 與 ROS_DOMAIN_ID
-# 預設容器名稱: vla-inference
+export DISPLAY="${DISPLAY:-:0}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+export ZENOH_PROFILE="${ZENOH_PROFILE:-local}"
+export ZENOH_ROUTER_HOST="${ZENOH_ROUTER_HOST:-127.0.0.1}"
+export ZENOH_ROUTER_PORT="${ZENOH_ROUTER_PORT:-7447}"
+export VLMOTION_ENABLE_MOTION="${VLMOTION_ENABLE_MOTION:-false}"
+export VLMOTION_ENABLE_STT="${VLMOTION_ENABLE_STT:-true}"
 
-EXEC_USER=""
-DOMAIN_ID=""
-if [[ "${1-}" == "--root" ]]; then
-  EXEC_USER="root"
-  shift || true
-fi
+build=false
+follow=true
+shell=false
 
-# 解析參數：支援 --root、容器名稱與數字型 ROS_DOMAIN_ID
-CONTAINER_NAME="vla-inference"
+usage() {
+  cat <<'EOF'
+Usage: ./docker/run.sh [--build] [--motion] [--no-stt] [--shell] [--no-follow] [ROS_DOMAIN_ID]
 
-is_integer() {
-  [[ "$1" =~ ^[0-9]+$ ]]
+The default matches:
+  /home/hrc/pomelo925/helloRobot_stretch3/run.sh local cams-driver 0
+
+Options:
+  --build      Force a Docker image rebuild.
+  --motion     Enable the motion node. Verify camera and TF topics first.
+  --no-stt     Disable the bundled offline speech-to-text node.
+  --shell      Enter the running container after startup.
+  --no-follow  Start in the background without following logs.
+EOF
 }
 
-if [[ ${#@} -gt 0 ]]; then
-  if is_integer "${1-}"; then
-    DOMAIN_ID="$1"
-    shift || true
-  elif [[ -n "${1-}" ]]; then
-    CONTAINER_NAME="$1"
-    shift || true
-    if [[ ${#@} -gt 0 ]] && is_integer "${1-}"; then
-      DOMAIN_ID="$1"
-      shift || true
-    fi
-  fi
-fi
+while (($#)); do
+  case "$1" in
+    --build) build=true ;;
+    --motion) export VLMOTION_ENABLE_MOTION=true ;;
+    --no-stt) export VLMOTION_ENABLE_STT=false ;;
+    --shell) shell=true; follow=false ;;
+    --no-follow) follow=false ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      if [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 <= 232)); then
+        export ROS_DOMAIN_ID="$1"
+      else
+        echo "Unknown argument: $1" >&2
+        usage >&2
+        exit 2
+      fi
+      ;;
+  esac
+  shift
+done
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "找不到 docker 指令，請先安裝 Docker" >&2
+  echo "docker is not installed" >&2
   exit 1
 fi
 
-# 先確保服務已啟動（若尚未建立/啟動會自動 up -d）
-echo "確保 docker compose 服務已啟動（up -d）..."
-docker compose -f docker/docker-compose.yml up -d >/dev/null
+# Prepare X11 authorization before the GUI container starts.
+xauth_file=/tmp/.docker.xauth
+touch "$xauth_file"
+xauth_list="$(xauth nlist "$DISPLAY" 2>/dev/null | sed -e 's/^..../ffff/' || true)"
+if [[ -n "$xauth_list" ]]; then
+  printf '%s\n' "$xauth_list" | xauth -f "$xauth_file" nmerge -
+fi
+chmod a+r "$xauth_file"
+xhost +local:docker >/dev/null 2>&1 || true
 
-# 是否存在此容器（包含已停止）
-if ! docker ps -a --format '{{.Names}}' | grep -wq "${CONTAINER_NAME}"; then
-  echo "找不到容器：${CONTAINER_NAME}（已嘗試 docker compose up -d）" >&2
-  exit 1
+compose=(docker compose -f docker/docker-compose.yml)
+up_args=(up -d)
+if [[ "$build" == true ]]; then
+  up_args+=(--build)
 fi
 
-# 若容器存在但未運行，先啟動
-if ! docker ps --format '{{.Names}}' | grep -wq "${CONTAINER_NAME}"; then
-  echo "容器未在運行，正在啟動：${CONTAINER_NAME}"
-  docker start "${CONTAINER_NAME}" >/dev/null
+echo "Starting VLMotion: domain=${ROS_DOMAIN_ID} zenoh=${ZENOH_ROUTER_HOST}:${ZENOH_ROUTER_PORT} motion=${VLMOTION_ENABLE_MOTION} stt=${VLMOTION_ENABLE_STT}"
+"${compose[@]}" "${up_args[@]}" vlmotion
+"${compose[@]}" ps vlmotion
+
+if [[ "$shell" == true ]]; then
+  exec docker exec -it vlmotion bash
 fi
 
-# 設置X11權限
-echo "設置 X11 權限..."
-# 为Docker创建一个可访问的X11认证文件
-XAUTH=/tmp/.docker.xauth
-if [ ! -f $XAUTH ]; then
-    xauth_list=$(xauth nlist $DISPLAY 2>/dev/null | sed -e 's/^..../ffff/')
-    if [ ! -z "$xauth_list" ]; then
-        echo $xauth_list | xauth -f $XAUTH nmerge -
-    else
-        touch $XAUTH
-    fi
-    chmod a+r $XAUTH
+if [[ "$follow" == true ]]; then
+  exec "${compose[@]}" logs -f vlmotion
 fi
-# 允许Docker容器连接到X11
-xhost +local:docker 2>/dev/null || true
-# 将认证文件复制到容器中
-docker cp $XAUTH "${CONTAINER_NAME}:/tmp/.docker.xauth" 2>/dev/null || true
 
-echo "進入容器: ${CONTAINER_NAME}"
-if [[ -n "${DOMAIN_ID}" ]]; then
-  echo "會在容器內套用 ROS_DOMAIN_ID=${DOMAIN_ID}（若 /workspace/environment.sh 存在）"
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash -lc \
-      "if [ -f /workspace/environment.sh ]; then source /workspace/environment.sh ${DOMAIN_ID}; else echo '提示: /workspace/environment.sh 不存在，略過'; fi; exec bash -i"
-  fi
-else
-  if [[ -n "${EXEC_USER}" ]]; then
-    exec docker exec -u "${EXEC_USER}" -it "${CONTAINER_NAME}" bash
-  else
-    exec docker exec -it "${CONTAINER_NAME}" bash
-  fi
-fi
+echo "VLMotion is running. Logs: docker logs -f vlmotion"

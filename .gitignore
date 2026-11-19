@@ -58,6 +58,8 @@ temp/
 *.pt
 *.safetensors
 checkpoints/
+models/
+standalone_stt/
 data/
 datasets/
 
@@ -72,7 +74,6 @@ ros2_ws/frames_*
 
 ros2_ws/src/camera_tf_calibration/
 ros2_ws/src/point_detection/
-ros2_ws/src/vlpoint/
 ros2_ws/src/vlservo/
 ros2_ws/src/audio_listener_worker/
 ros2_ws/src/dual_camera_point_compare/

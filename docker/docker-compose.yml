@@ -1,99 +1,58 @@
 services:
-  vla-inference:
+  vlmotion:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      args:
-        GITHUB_TOKEN: ${GITHUB_TOKEN-}
-        ENABLE_STRETCH3: ${ENABLE_STRETCH3-0}
-        STRETCH3_REPO: ${STRETCH3_REPO-https://github.com/hello-robot/stretch3.git}
-    image: vla-inference:latest
-    container_name: vla-inference
-    hostname: vla-dev
-    user: "0:0"
-    privileged: true
+    image: vlmotion-hellorobot:latest
+    container_name: vlmotion
+    hostname: vlmotion
     network_mode: host
     environment:
-      - DISPLAY=${DISPLAY}
-      - QT_X11_NO_MITSHM=1
-      - XDG_RUNTIME_DIR=/tmp/runtime-root
-      - XAUTHORITY=/tmp/.docker.xauth
-      # Enable real hardware inside Docker (set by default here)
-      - USE_STRETCH_HARDWARE=${USE_STRETCH_HARDWARE-1}
-      # Stretch calibration environment
-      - HELLO_FLEET_ID=stretch-se3-3092
-      # Use writable stretch_user as HELLO_FLEET_PATH so logs can be written
-      - HELLO_FLEET_PATH=/root/stretch_user
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      XDG_RUNTIME_DIR: /tmp/runtime-root
+      XAUTHORITY: /tmp/.docker.xauth
+
+      # Must match the profile/domain selected in helloRobot_stretch3/run.sh.
+      RMW_IMPLEMENTATION: rmw_zenoh_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ZENOH_PROFILE: ${ZENOH_PROFILE:-local}
+      ZENOH_ROUTER_HOST: ${ZENOH_ROUTER_HOST:-127.0.0.1}
+      ZENOH_ROUTER_PORT: ${ZENOH_ROUTER_PORT:-7447}
+      ZENOH_CONFIG_OVERRIDE: 'mode="client";connect/endpoints=["tcp/${ZENOH_ROUTER_HOST:-127.0.0.1}:${ZENOH_ROUTER_PORT:-7447}"]'
+
+      VLMOTION_CONTROLLER_URL: ${VLMOTION_CONTROLLER_URL:-http://192.168.0.222:11000}
+      VLMOTION_MODEL_PATH: ${VLMOTION_MODEL_PATH:-PME033541/vla13}
+      # Motion stays opt-in until topics and TF have been verified.
+      VLMOTION_ENABLE_MOTION: ${VLMOTION_ENABLE_MOTION:-false}
+      VLMOTION_ENABLE_STT: ${VLMOTION_ENABLE_STT:-true}
+      VLMOTION_STT_MODEL_PATH: ${VLMOTION_STT_MODEL_PATH:-small}
+      VLMOTION_STT_MODEL_DIR: ${VLMOTION_STT_MODEL_DIR:-/models/faster-whisper}
+      VLMOTION_STT_LANGUAGE: ${VLMOTION_STT_LANGUAGE:-auto}
+      VLMOTION_STT_CPU_THREADS: ${VLMOTION_STT_CPU_THREADS:-8}
+      # helloRobot_stretch3 publishes odometry but currently disables its TF.
+      VLMOTION_PUBLISH_ODOM_TF: ${VLMOTION_PUBLISH_ODOM_TF:-true}
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      # Live-mount project code so changes reflect without rebuild
-      - ../ros2_ws/src/vlpoint:/workspace/ros2_ws/src/vlpoint:rw
-      - ../ros2_ws/src/vlservo:/workspace/ros2_ws/src/vlservo:rw
-      - ../ros2_ws:/workspace/ros2_ws
-      - ../Script:/workspace/Script
-      - ../Outputs:/workspace/Outputs
-      - ../maps:/workspace/maps
-      # Mount environment script so changes reflect without rebuilding image
+      - /tmp/.docker.xauth:/tmp/.docker.xauth:ro
+      - ../ros2_ws/src/audio_common/speech_recognition_msgs:/workspace/ros2_ws/src/speech_recognition_msgs:ro
+      - ../ros2_ws/src/vlmotion_stt:/workspace/ros2_ws/src/vlmotion_stt:ro
+      - ../ros2_ws/src/vlpoint:/workspace/ros2_ws/src/vlpoint:ro
+      - ../ros2_ws/src/white_point_pipeline:/workspace/ros2_ws/src/white_point_pipeline:ro
+      - ../Outputs:/workspace/Outputs:rw
+      - ../models/faster-whisper:/models/faster-whisper:rw
       - ../environment.sh:/workspace/environment.sh:ro
-      # Mount wit token file
-      - ../wit_token.txt:/workspace/wit_token.txt:ro
-      # Mount only the fleet calibration folder read-write into HELLO_FLEET_PATH (需要寫入校準資料)
-      - ${HOME}/stretch3/stretch-se3-3092:/root/stretch_user/stretch-se3-3092:rw
-      # Mount hello_helpers from host system for visual servoing
-      - ${HOME}/.local/lib/python3.10/site-packages/hello_helpers:/usr/local/lib/python3.10/dist-packages/hello_helpers:ro
-      # Optional: mount a local clone of stretch3 to bypass cloning in Dockerfile
-      # - ../stretch3:/root/stretch3:ro
-      - /dev:/dev
-      - /dev/video0:/dev/video0:rw
-      - /dev/video1:/dev/video1:rw
-      - /dev/video2:/dev/video2:rw
-      - /dev/video3:/dev/video3:rw
-      - /dev/video4:/dev/video4:rw
-      - /dev/video5:/dev/video5:rw
-      - /dev/video6:/dev/video6:rw
-      - /dev/video7:/dev/video7:rw
-      - /dev/video8:/dev/video8:rw
-      - /dev/video9:/dev/video9:rw
-      - /dev/video10:/dev/video10:rw
-      - /dev/video11:/dev/video11:rw
-      - /dev/video12:/dev/video12:rw
-      - /dev/video13:/dev/video13:rw
-      - /dev/video14:/dev/video14:rw
-      - /dev/video15:/dev/video15:rw
-      - /dev/video16:/dev/video16:rw
-      - /dev/video17:/dev/video17:rw
-      - /dev/video18:/dev/video18:rw
-      - /dev/video19:/dev/video19:rw
-      - /dev/video20:/dev/video20:rw
-      - /dev/video21:/dev/video21:rw
-      
-    devices:
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
-      - /dev/video4:/dev/video4
-      - /dev/video5:/dev/video5
-      - /dev/video6:/dev/video6
-      - /dev/video7:/dev/video7
-      - /dev/video8:/dev/video8
-      - /dev/video9:/dev/video9
-      - /dev/video10:/dev/video10
-      - /dev/video11:/dev/video11
-      - /dev/video12:/dev/video12
-      - /dev/video13:/dev/video13
-      - /dev/video14:/dev/video14
-      - /dev/video15:/dev/video15
-      - /dev/video16:/dev/video16
-      - /dev/video17:/dev/video17
-      - /dev/video18:/dev/video18
-      - /dev/video19:/dev/video19
-      - /dev/video20:/dev/video20
-      - /dev/video21:/dev/video21
-      - /dev/ttyUSB0:/dev/ttyUSB0
-      - /dev/ttyACM0:/dev/ttyACM0
-    group_add:
-      - video 
+      - vlmotion-build:/workspace/ros2_ws/build
+      - vlmotion-install:/workspace/ros2_ws/install
+      - vlmotion-log:/workspace/ros2_ws/log
+
     stdin_open: true
     tty: true
-    command: /bin/bash
+    restart: unless-stopped
+
+volumes:
+  vlmotion-build:
+  vlmotion-install:
+  vlmotion-log:

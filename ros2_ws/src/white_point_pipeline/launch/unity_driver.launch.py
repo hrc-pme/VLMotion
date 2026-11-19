@@ -360,8 +360,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'speech_language',
-            default_value='en-US',
-            description='Language for speech_to_text node',
+            default_value='auto',
+            description='Whisper language code, or auto for Mandarin/English detection',
         ),
         DeclareLaunchArgument(
             'speech_self_cancellation',

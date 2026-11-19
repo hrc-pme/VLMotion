@@ -20,6 +20,9 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
 
+  <!-- Python runtime: faster-whisper and OpenCC are installed by Dockerfile. -->
+  <exec_depend>python3-numpy</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

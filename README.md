@@ -1,219 +1,153 @@
-# VLMotion
+# VLMotion application container
 
-VLMotion is a ROS 2 project for the Hello Robot Stretch. It includes the White Point motion pipeline, navigation and Unity tools, mapping utilities, and a rosbag recorder for dataset preparation.
+This repository is the application side of the Stretch system. Hardware is
+owned by `/home/hrc/pomelo925/helloRobot_stretch3`; this container only runs:
 
-The commands below assume Docker is used and the repository is mounted at `/workspace`.
+- White Point GUI
+- VLPoint HTTP client
+- D435i/D405 pixel-to-3D conversion
+- Offline faster-whisper speech-to-text
+- Direct motion logic
 
-## Docker Setup
+The two containers exchange ROS 2 data through Zenoh. The GUI sends inference
+requests over HTTP to `http://192.168.0.222:11000`.
 
-The Docker configuration uses host networking, exposes the robot and camera devices, mounts the ROS 2 workspace and output folders, and supports X11 applications.
+## Start the hardware stack
 
-Before building, check the Stretch fleet ID and calibration path in `docker/docker-compose.yml`. They currently use `stretch-se3-3092` and `${HOME}/stretch3/stretch-se3-3092`.
-
-Build the image and start the container from the repository root:
-
-```bash
-./docker/build.sh
-```
-
-To rebuild without cache:
+Leave clearance around the arm before `cams-driver` homes the robot.
 
 ```bash
-./docker/build.sh --no-cache
+cd /home/hrc/pomelo925/helloRobot_stretch3
+./run.sh local cams-driver 0
 ```
 
-Enter the container with ROS domain ID `0`:
+This starts the local Zenoh router, Stretch driver, D435i, and D405. Do not
+start a second robot or RealSense driver from this repository.
+
+Start the ReSpeaker hardware publisher as a second HelloRobot service. It can
+run beside `cams-driver` and publishes `/speech_audio` to the same Zenoh router:
+
+```bash
+cd /home/hrc/pomelo925/helloRobot_stretch3
+./run.sh local respeaker 0
+```
+
+HelloRobot owns the microphone device. The offline Whisper model and text
+output are owned by VLMotion.
+
+## Start VLMotion
+
+In another terminal:
+
+```bash
+cd /home/hrc/VLMotion_stretch3_lbk
+./docker/run.sh --build 0
+```
+
+The first build creates a small ROS application image. Later starts can omit
+`--build`:
 
 ```bash
 ./docker/run.sh 0
 ```
 
-Build and source the ROS 2 workspace inside the container:
+Motion is disabled by default. The GUI, model connection, camera views, and
+2D-to-3D nodes still run. Offline STT is enabled by default and uses the local
+model cache mounted from `models/faster-whisper`.
+
+The voice path is:
+
+```text
+ReSpeaker -> /speech_audio -> VLMotion Whisper
+          -> /vlmotion/speech_to_text -> GUI
+```
+
+Use `./docker/run.sh --no-stt 0` only when speech recognition is not needed.
+
+## Verify before enabling motion
+
+Enter the application container:
+
+```bash
+./docker/run.sh --shell 0
+```
+
+Then verify the remote hardware data:
 
 ```bash
 source /workspace/environment.sh 0
-cd /workspace/ros2_ws
-colcon build --symlink-install
-source install/setup.bash
-cd /workspace
+ros2 topic hz /head_camera/head_camera/color/image_raw
+ros2 topic hz /head_camera/head_camera/aligned_depth_to_color/image_raw
+ros2 topic hz /gripper_camera/gripper_camera/color/image_raw
+ros2 topic echo /joint_states --once
+ros2 topic echo /stretch3/odom --once
+ros2 action info /stretch_controller/follow_joint_trajectory
+ros2 run tf2_ros tf2_echo stretch3/base_link head_camera_color_optical_frame
+ros2 run tf2_ros tf2_echo stretch3/base_link gripper_camera_color_optical_frame
 ```
 
-Run the following in each new terminal:
+The hardware stack currently publishes `/stretch3/odom` without broadcasting
+its odometry TF. VLMotion therefore starts a small odometry-to-TF bridge. Set
+`VLMOTION_PUBLISH_ODOM_TF=false` if another localization system owns that TF.
 
-```bash
-source /workspace/environment.sh 0
-source /workspace/ros2_ws/install/setup.bash
-```
-
-Stop the container with:
+After the checks pass, restart with motion enabled:
 
 ```bash
 ./docker/stop.sh
+./docker/run.sh --motion 0
 ```
 
-## White Point Pipeline
+Keep the emergency stop reachable and the arm workspace clear.
 
-This launches the Stretch driver, RealSense cameras, camera transforms, White Point GUI, 3D point conversion, and direct motion controller. D405 and ReSpeaker support are enabled by default.
+## Zenoh profiles
 
-```bash
-ros2 launch white_point_pipeline white_point_direct_pipeline.launch.py
-```
-
-For a D435i-only setup without ReSpeaker:
-
-```bash
-ros2 launch white_point_pipeline white_point_direct_pipeline.launch.py \
-  enable_d405_view:=false \
-  enable_respeaker:=false
-```
-
-Useful launch arguments include `controller_url`, `model_path`, `use_compressed_color`, and `require_point_confirmation`.
-
-## Camera Setup
-
-The dataset recorder does not start the camera. The White Point launch file starts `realsense2_camera_node` with the node and camera name `d435i`. Its serial number and topic prefix are defined in `ros2_ws/src/white_point_pipeline/config/cameras.yaml`.
-
-The pipeline enables RGB, depth, aligned depth, TF, and point-cloud output at `640x480x30`. Do not start another D435i node while the pipeline is running.
-
-To start only the robot driver and D435i for dataset collection, use two terminals:
-
-```bash
-# Terminal 1: robot state and TF
-ros2 launch stretch_launch stretch_driver.launch.py \
-  mode:=navigation broadcast_odom_tf:=True
-```
-
-```bash
-# Terminal 2: D435i camera
-ros2 launch stretch_launch d435i_basic.launch.py \
-  camera_namespace:=/ camera_name:=d435i
-```
-
-Check the required topics before recording:
-
-```bash
-ros2 topic hz /d435i/color/image_raw/compressed
-ros2 topic hz /d435i/depth/image_rect_raw/compressedDepth
-```
-
-## Dataset Recording
-
-`record_with_ui.launch.py` opens a small Tkinter interface that runs `ros2 bag record`. It records raw ROS data for later conversion or annotation; it does not start the camera or create dataset labels.
-
-The default configuration records:
-
-- `/tf_static`
-- `/d435i/color/image_raw/compressed`
-- `/d435i/depth/image_rect_raw/compressedDepth`
-
-Start the White Point pipeline, or start the driver and camera separately, then launch the recorder in another terminal:
-
-```bash
-ros2 launch bag_recorder record_with_ui.launch.py
-```
-
-Use **Start Recording** and **Stop** in the UI. Bags are saved as numbered folders such as `0001` and `0002` under:
+The default is the local router used by `./run.sh local cams-driver 0`:
 
 ```text
-/workspace/Outputs/rosbags/test
+ROS_DOMAIN_ID=0
+ZENOH_ROUTER_HOST=127.0.0.1
+ZENOH_ROUTER_PORT=7447
 ```
 
-To use a custom configuration:
+To use the lab Spark router instead, both repositories must use the same
+profile and domain:
 
 ```bash
-ros2 launch bag_recorder record_with_ui.launch.py \
-  config_file:=/workspace/my_bag_recorder.yaml
+ZENOH_PROFILE=spark \
+ZENOH_ROUTER_HOST=192.168.0.230 \
+./docker/run.sh 0
 ```
 
-The recorder can also run without a GUI:
+## Launch file
+
+The application-only launch file is:
 
 ```bash
-ros2 launch bag_recorder record.launch.py
+ros2 launch white_point_pipeline hellorobot_app.launch.py
 ```
 
-Inspect or replay a recording with:
+It consumes these hardware topics by default:
 
-```bash
-ros2 bag info /workspace/Outputs/rosbags/test/0001
-ros2 bag play /workspace/Outputs/rosbags/test/0001
+```text
+/head_camera/head_camera/color/image_raw/compressed
+/head_camera/head_camera/aligned_depth_to_color/image_raw
+/head_camera/head_camera/color/camera_info
+/gripper_camera/gripper_camera/color/image_rect_raw/compressed
+/gripper_camera/gripper_camera/aligned_depth_to_color/image_raw
+/gripper_camera/gripper_camera/color/camera_info
+/stretch3/tf
+/stretch3/tf_static
+/stretch3/odom
+/joint_states
+/speech_audio
 ```
 
-## Navigation
+It publishes commands only when `enable_motion:=true`:
 
-Start the RPLIDAR driver and scan filter:
-
-```bash
-ros2 launch stretch_launch rplidar.launch.py
+```text
+/stretch/cmd_vel
+/stretch_controller/follow_joint_trajectory
 ```
 
-Start Nav2 with one of the available maps:
-
-```bash
-ros2 launch stretch_launch navigation.launch.py map:=maps/elevator_6f.yaml
-```
-
-```bash
-ros2 launch stretch_launch navigation.launch.py map:=maps/6f_ele2.yaml
-```
-
-Publish the `map -> base_link` transform as a `PoseStamped` message on `/pose` for Unity or other clients:
-
-```bash
-ros2 run stretch_unity_bridge tf_to_pose
-```
-
-## Unity
-
-Start rosbridge WebSocket using the default port or port `8080`:
-
-```bash
-ros2 launch rosbridge_server rosbridge_websocket_launch.xml
-ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=8080
-```
-
-Start the Unity ROS TCP endpoint using its defaults or port `10000`:
-
-```bash
-ros2 launch ros_tcp_endpoint endpoint.py
-ros2 launch ros_tcp_endpoint endpoint.py tcp_ip:=0.0.0.0 tcp_port:=10000
-```
-
-Run the bridge that converts Unity joint commands into Stretch commands:
-
-```bash
-ros2 run stretch_unity_bridge stretch_unity_bridge_joint_states
-```
-
-Only run one command from each pair of alternative rosbridge and TCP endpoint configurations.
-
-## Mapping
-
-Start the Stretch driver, RPLIDAR, teleoperation, SLAM Toolbox, and RViz:
-
-```bash
-ros2 launch stretch_launch offline_mapping.launch.py
-```
-
-Save the completed map:
-
-```bash
-cd /workspace/maps
-ros2 run nav2_map_server map_saver_cli -f ./<map_name>
-```
-
-## Stretch Services
-
-These services require the Stretch driver or White Point pipeline to be running.
-
-```bash
-# Return control to the gamepad
-ros2 service call /switch_to_gamepad_mode std_srvs/srv/Trigger {}
-
-# Enable navigation control
-ros2 service call /switch_to_navigation_mode std_srvs/srv/Trigger {}
-
-# Home the robot joints
-ros2 service call /home_the_robot std_srvs/srv/Trigger {}
-```
-
-Make sure the robot has enough free space before running the homing service.
+The old standalone STT container is no longer required for VLMotion. The
+bundled `vlmotion_stt` node uses the ignored `models/faster-whisper` cache.

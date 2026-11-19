@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>vlmotion_stt</name>
+  <version>0.1.0</version>
+  <description>Offline faster-whisper adapter for ReSpeaker utterances.</description>
+  <maintainer email="hrclab.nthu@gmail.com">HRC PME</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>audio_common_msgs</depend>
+  <depend>speech_recognition_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

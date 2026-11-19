@@ -83,6 +83,7 @@ import math
 import struct
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from std_msgs.msg import String
 from geometry_msgs.msg import Point, PointStamped
@@ -533,6 +534,8 @@ class WhitePointGUI(Node):
         self.declare_parameter('secondary_color_topic', '')
         self.declare_parameter('secondary_rotate_display', False)
         self.declare_parameter('secondary_pixel_topic', '/white_point_pixel_d405')
+        self.declare_parameter('speech_to_text_topic', '/vlmotion/speech_to_text')
+        self.declare_parameter('voice_ros_timeout_sec', 20.0)
         self.declare_parameter('require_point_confirmation', True)
         self.declare_parameter('point_confirmation_timeout_sec', 3.0)
         color_topic = self.get_parameter('color_topic').get_parameter_value().string_value
@@ -541,6 +544,10 @@ class WhitePointGUI(Node):
             self.get_parameter('secondary_rotate_display').value
         )
         self.secondary_pixel_topic = self.get_parameter('secondary_pixel_topic').get_parameter_value().string_value
+        speech_to_text_topic = self.get_parameter('speech_to_text_topic').get_parameter_value().string_value
+        self.voice_ros_timeout_sec = float(
+            self.get_parameter('voice_ros_timeout_sec').value
+        )
         self.get_logger().info(f'Subscribing to color topic: {color_topic}')
 
         # 訂閱顏色影像（支援 raw / compressed）
@@ -549,7 +556,7 @@ class WhitePointGUI(Node):
                 CompressedImage,
                 color_topic,
                 self.compressed_image_callback,
-                10
+                qos_profile_sensor_data
             )
             self.get_logger().info('Color transport mode: compressed')
         else:
@@ -557,7 +564,7 @@ class WhitePointGUI(Node):
                 Image,
                 color_topic,
                 self.image_callback,
-                10
+                qos_profile_sensor_data
             )
             self.get_logger().info('Color transport mode: raw')
 
@@ -568,7 +575,7 @@ class WhitePointGUI(Node):
                     CompressedImage,
                     secondary_color_topic,
                     self.secondary_compressed_image_callback,
-                    10
+                    qos_profile_sensor_data
                 )
                 self.get_logger().info(f'Subscribing to secondary compressed color topic: {secondary_color_topic}')
             else:
@@ -576,7 +583,7 @@ class WhitePointGUI(Node):
                     Image,
                     secondary_color_topic,
                     self.secondary_image_callback,
-                    10
+                    qos_profile_sensor_data
                 )
                 self.get_logger().info(f'Subscribing to secondary raw color topic: {secondary_color_topic}')
 
@@ -626,13 +633,14 @@ class WhitePointGUI(Node):
 
         self.start_listen_pub = self.create_publisher(String, '/start_listen', 10)
 
-        # 訂閱 ReSpeaker speech_to_text（供 GUI 按鈕語音輸入使用）
+        # 訂閱 VLMotion 本機 STT（供 GUI 按鈕語音輸入使用）
         self.speech_to_text_sub = self.create_subscription(
             SpeechRecognitionCandidates,
-            '/speech_to_text',
+            speech_to_text_topic,
             self.speech_to_text_callback,
             10
         )
+        self.get_logger().info(f'Subscribing to speech text: {speech_to_text_topic}')
 
         # ── 深度影像 + 相機內參（用於多點選擇時的 3D 投影）──
         self.declare_parameter('depth_topic', '')
@@ -644,10 +652,10 @@ class WhitePointGUI(Node):
 
         if depth_topic:
             self.depth_sub_node = self.create_subscription(
-                Image, depth_topic, self._depth_callback_node, 10)
+                Image, depth_topic, self._depth_callback_node, qos_profile_sensor_data)
         if camera_info_topic:
             self.cam_info_sub_node = self.create_subscription(
-                CameraInfo, camera_info_topic, self._camera_info_callback_node, 10)
+                CameraInfo, camera_info_topic, self._camera_info_callback_node, qos_profile_sensor_data)
 
         self.depth_image = None   # 最新未旋轉深度圖
         self.cam_K = None         # 3x3 內參矩陣
@@ -849,7 +857,7 @@ class MainWindow(QMainWindow):
         self.is_processing_voice = False
         self.voice_waiting_ros_stt = False
         self.voice_use_ros_stt = True
-        self.voice_ros_timeout_ms = int((self.voice_capture_duration + 2.0) * 1000)
+        self.voice_ros_timeout_ms = int(self.ros_node.voice_ros_timeout_sec * 1000)
         self.voice_timeout_timer = QTimer(self)
         self.voice_timeout_timer.setSingleShot(True)
         self.voice_timeout_timer.timeout.connect(self.on_voice_listen_timeout)
@@ -1626,7 +1634,10 @@ class MainWindow(QMainWindow):
         if self.voice_available:
             self._start_legacy_voice_capture()
             return
-        self.on_voice_error("No /speech_to_text result received. Please check ReSpeaker node.")
+        self.on_voice_error(
+            "No /vlmotion/speech_to_text result received. "
+            "Please check ReSpeaker and VLMotion STT."
+        )
         self.on_voice_finished()
     
     def on_voice_result(self, text: str):
@@ -1657,9 +1668,9 @@ class MainWindow(QMainWindow):
         self.voice_button.setEnabled(True)
         self.voice_button.setText("Voice Input")
         if self.voice_available:
-            self.voice_button.setToolTip("Click to listen from /speech_to_text, then fallback to local recording if needed")
+            self.voice_button.setToolTip("Click to listen from VLMotion offline STT, then fallback to local recording if needed")
         else:
-            self.voice_button.setToolTip("Click to listen from /speech_to_text (local PyAudio fallback unavailable)")
+            self.voice_button.setToolTip("Click to listen from VLMotion offline STT")
 
     def _get_next_filename(self, directory: str) -> str:
         """

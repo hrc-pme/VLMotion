@@ -1,6 +1,12 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, ExecuteProcess
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    LogInfo,
+    RegisterEventHandler,
+)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -17,10 +23,34 @@ def generate_launch_description():
         description='Launch sound_play node'
     )
 
+    launch_speech_to_text_arg = DeclareLaunchArgument(
+        'launch_speech_to_text',
+        default_value='true',
+        description='Launch the in-process speech-to-text node'
+    )
+
     language_arg = DeclareLaunchArgument(
         'language',
-        default_value='en-US',
-        description='Language used in speech_to_text.py'
+        default_value='auto',
+        description='Whisper language code, or auto for Mandarin/English detection'
+    )
+
+    model_size_arg = DeclareLaunchArgument(
+        'model_size',
+        default_value='small',
+        description='faster-whisper multilingual model size'
+    )
+
+    model_dir_arg = DeclareLaunchArgument(
+        'model_dir',
+        default_value='/workspace/models/faster-whisper',
+        description='Persistent faster-whisper download/cache directory'
+    )
+
+    local_files_only_arg = DeclareLaunchArgument(
+        'local_files_only',
+        default_value='true',
+        description='Do not access the network while the speech node is running'
     )
 
     self_cancellation_arg = DeclareLaunchArgument(
@@ -68,10 +98,14 @@ def generate_launch_description():
     )
 
     speech_to_text_node = Node(
+        condition=IfCondition(LaunchConfiguration('launch_speech_to_text')),
         package='respeaker_ros2',
         executable='speech_to_text',
         parameters=[{
             'language': LaunchConfiguration('language'),
+            'model_size': LaunchConfiguration('model_size'),
+            'model_dir': LaunchConfiguration('model_dir'),
+            'local_files_only': LaunchConfiguration('local_files_only'),
             'self_cancellation': LaunchConfiguration('self_cancellation'),
             'tts_tolerance': 0.5
         }]
@@ -80,16 +114,25 @@ def generate_launch_description():
     return LaunchDescription([
         # publish_tf_arg,
         launch_soundplay_arg,
+        launch_speech_to_text_arg,
         language_arg,
+        model_size_arg,
+        model_dir_arg,
+        local_files_only_arg,
         self_cancellation_arg,
         # static_transformer_node,
-        # Ensure PulseAudio can't claim the capture device before respeaker_node starts
+        # Stop PulseAudio first, then start all microphone consumers only after
+        # that command exits. Restart PulseAudio when this launch shuts down.
         stop_pulseaudio,
-        respeaker_node,
-        sound_play_node,
-        speech_to_text_node,
-        # Restart pulse audio
-        start_pulseaudio,
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=stop_pulseaudio,
+                on_exit=[respeaker_node, sound_play_node, speech_to_text_node],
+            )
+        ),
+        RegisterEventHandler(
+            OnShutdown(on_shutdown=[start_pulseaudio])
+        ),
         # LogInfo(
         #     condition=IfCondition(LaunchConfiguration('publish_tf')),
         #     msg='Static transform publisher node will be launched.'
