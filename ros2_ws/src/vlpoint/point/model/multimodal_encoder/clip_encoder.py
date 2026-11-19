@@ -331,6 +331,14 @@ class CLIPVisionTower(nn.Module):
             sam_features = self._sam3_features_for_clip(images, clip_features)
             if sam_features is None:
                 return clip_features
+            if any(
+                child.__class__.__name__ == "Linear4bit"
+                for module in (self.sam3_fusion, self.sam3_candidate_head)
+                for child in module.modules()
+            ):
+                self.ensure_floating_sam3_fusion(
+                    device=clip_features.device, dtype=clip_features.dtype
+                )
             work_dtype = self.sam3_fusion[1].weight.dtype
             clip_work = clip_features.to(dtype=work_dtype)
             sam_work = sam_features.to(device=clip_work.device, dtype=work_dtype)
